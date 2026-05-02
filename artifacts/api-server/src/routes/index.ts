@@ -23,6 +23,7 @@ import hardwareRouter from "./hardware/index.js";
 import aiSummaryRouter from "./ai-summary/index.js";
 import payrollRouter from "./payroll/index.js";
 import reminderSettingsRouter from "./finance/reminder-settings.js";
+import parentFeeStatementRouter from "./parent/fee-statement.js";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use(hardwareRouter);
 router.use(aiSummaryRouter);
 router.use(payrollRouter);
 router.use(reminderSettingsRouter);
+router.use(parentFeeStatementRouter);
 
 export default router;
