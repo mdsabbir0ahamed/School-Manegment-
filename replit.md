@@ -95,6 +95,26 @@ Pre-seeded via `executeSql`:
 - 10 payment transactions (৳22,300 total)
 - Attendance for today and yesterday for all 17 students
 
+## Real-Time Notifications (SSE)
+
+The notification bell in the sidebar uses Server-Sent Events (SSE) for zero-latency updates:
+
+- **Backend:** `GET /api/notifications/stream` — authenticated long-lived SSE connection
+  - Sends `event: init` with current unread count on connect
+  - Sends `event: update` when a notification is created, read, or deleted
+  - 25-second heartbeat to keep proxies alive
+  - Connection registry in `artifacts/api-server/src/lib/sse-manager.ts`
+- **Frontend:** `useNotificationSSE` hook (`artifacts/school-erp/src/hooks/useNotificationSSE.ts`)
+  - Uses `fetch` streaming (supports `Authorization` header, unlike native `EventSource`)
+  - Exponential backoff reconnect (1s → 30s max)
+  - Badge updates instantly when bulk or individual notifications are sent/read
+
+Triggers that broadcast SSE updates:
+- `POST /notifications/bulk` — notifies each target parent
+- `PUT /notifications/read-all` — resets unread count to 0
+- `PUT /notifications/:id/read` — decrements count
+- `DELETE /notifications/:id` — decrements count
+
 ## API Routes
 
 All routes prefixed with `/api/`:

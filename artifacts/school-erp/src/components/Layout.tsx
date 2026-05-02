@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
 import { useAuth, canAccessRoute, ROLE_CONFIG, type UserRole } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { useTenant } from "@/lib/tenant";
 import { useSyncEngine } from "@/hooks/useSyncEngine";
-import { customFetch } from "@workspace/api-client-react";
+import { useNotificationSSE } from "@/hooks/useNotificationSSE";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Users, GraduationCap, CalendarCheck,
@@ -45,20 +44,14 @@ const ROLE_BADGE_COLORS: Record<string, string> = {
 };
 
 function NotificationBell() {
-  const { data } = useQuery<{ unreadCount: number }>({
-    queryKey: ["notifications-count"],
-    queryFn: () => customFetch("/api/notifications?limit=1"),
-    refetchInterval: 30_000,
-    staleTime: 15_000,
-  });
-  const unread = data?.unreadCount ?? 0;
+  const { unreadCount } = useNotificationSSE();
   return (
     <Link href="/notifications">
       <button className="relative p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
         <Bell className="h-4 w-4" />
-        {unread > 0 && (
+        {unreadCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white">
-            {unread > 9 ? "9+" : unread}
+            {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
       </button>

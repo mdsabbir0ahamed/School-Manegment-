@@ -12,8 +12,56 @@ import {
   type AuthRequest,
 } from "../../middlewares/requireAuth.js";
 import { requireAcademic } from "../../middlewares/requireRole.js";
+import { sseManager } from "../../lib/sse-manager.js";
 
 const router = Router();
+
+// ── SSE stream for real-time notification updates ──────────────────────────
+
+router.get(
+  "/notifications/stream",
+  requireAuth,
+  async (req: AuthRequest, res): Promise<void> => {
+    const userId = req.userId!;
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.flushHeaders();
+
+    const [unreadResult] = await db
+      .select({ c: count() })
+      .from(notificationsTable)
+      .where(
+        and(
+          eq(notificationsTable.userId, userId),
+          eq(notificationsTable.isRead, false),
+        ),
+      );
+
+    res.write(
+      `event: init\ndata: ${JSON.stringify({ unreadCount: unreadResult?.c ?? 0 })}\n\n`,
+    );
+
+    sseManager.add(userId, res);
+
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(": heartbeat\n\n");
+      } catch {
+        clearInterval(heartbeat);
+      }
+    }, 25000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      sseManager.remove(userId, res);
+    });
+  },
+);
 
 // ── List own notifications ─────────────────────────────────────────────────
 
@@ -151,6 +199,22 @@ router.post(
 
     await db.insert(notificationsTable).values(records);
 
+    for (const userId of parentUserIds) {
+      const [unread] = await db
+        .select({ c: count() })
+        .from(notificationsTable)
+        .where(
+          and(
+            eq(notificationsTable.userId, userId),
+            eq(notificationsTable.isRead, false),
+          ),
+        );
+      sseManager.sendToUser(userId, "update", {
+        unreadCount: unread?.c ?? 1,
+        notification: { title, message, type: notifType },
+      });
+    }
+
     res.json({
       sent: records.length,
       message: `Notification sent to ${records.length} parent(s)`,
@@ -164,10 +228,12 @@ router.put(
   "/notifications/read-all",
   requireAuth,
   async (req: AuthRequest, res): Promise<void> => {
+    const userId = req.userId!;
     await db
       .update(notificationsTable)
       .set({ isRead: true })
-      .where(eq(notificationsTable.userId, req.userId!));
+      .where(eq(notificationsTable.userId, userId));
+    sseManager.sendToUser(userId, "update", { unreadCount: 0 });
     res.json({ message: "All marked as read" });
   },
 );
@@ -178,6 +244,7 @@ router.put(
   "/notifications/:id/read",
   requireAuth,
   async (req: AuthRequest, res): Promise<void> => {
+    const userId = req.userId!;
     const id = parseInt(String(req.params["id"]), 10);
     if (isNaN(id)) {
       res.status(400).json({ error: "BAD_REQUEST" });
@@ -189,7 +256,7 @@ router.put(
       .where(
         and(
           eq(notificationsTable.id, id),
-          eq(notificationsTable.userId, req.userId!),
+          eq(notificationsTable.userId, userId),
         ),
       )
       .returning();
@@ -197,6 +264,16 @@ router.put(
       res.status(404).json({ error: "NOT_FOUND" });
       return;
     }
+    const [unread] = await db
+      .select({ c: count() })
+      .from(notificationsTable)
+      .where(
+        and(
+          eq(notificationsTable.userId, userId),
+          eq(notificationsTable.isRead, false),
+        ),
+      );
+    sseManager.sendToUser(userId, "update", { unreadCount: unread?.c ?? 0 });
     res.json({ message: "Marked as read" });
   },
 );
@@ -207,6 +284,7 @@ router.delete(
   "/notifications/:id",
   requireAuth,
   async (req: AuthRequest, res): Promise<void> => {
+    const userId = req.userId!;
     const id = parseInt(String(req.params["id"]), 10);
     if (isNaN(id)) {
       res.status(400).json({ error: "BAD_REQUEST" });
@@ -217,9 +295,19 @@ router.delete(
       .where(
         and(
           eq(notificationsTable.id, id),
-          eq(notificationsTable.userId, req.userId!),
+          eq(notificationsTable.userId, userId),
         ),
       );
+    const [unread] = await db
+      .select({ c: count() })
+      .from(notificationsTable)
+      .where(
+        and(
+          eq(notificationsTable.userId, userId),
+          eq(notificationsTable.isRead, false),
+        ),
+      );
+    sseManager.sendToUser(userId, "update", { unreadCount: unread?.c ?? 0 });
     res.json({ message: "Deleted" });
   },
 );
