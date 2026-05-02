@@ -6,12 +6,22 @@ interface SSEPayload {
   notification?: { title: string; message: string; type: string };
 }
 
+export interface IncomingNotification {
+  title: string;
+  message: string;
+  type: string;
+  id: number;
+}
+
 export function useNotificationSSE() {
   const { token } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [incomingNotification, setIncomingNotification] =
+    useState<IncomingNotification | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryDelay = useRef(1000);
+  const toastIdRef = useRef(0);
 
   useEffect(() => {
     if (!token) return;
@@ -60,6 +70,13 @@ export function useNotificationSSE() {
                 if (eventName === "init" || eventName === "update") {
                   setUnreadCount(payload.unreadCount);
                 }
+                if (eventName === "update" && payload.notification) {
+                  toastIdRef.current += 1;
+                  setIncomingNotification({
+                    ...payload.notification,
+                    id: toastIdRef.current,
+                  });
+                }
               } catch {
                 // ignore malformed frames
               }
@@ -93,5 +110,5 @@ export function useNotificationSSE() {
     };
   }, [token]);
 
-  return { unreadCount, setUnreadCount };
+  return { unreadCount, setUnreadCount, incomingNotification };
 }

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth, canAccessRoute, ROLE_CONFIG, type UserRole } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { useTenant } from "@/lib/tenant";
 import { useSyncEngine } from "@/hooks/useSyncEngine";
 import { useNotificationSSE } from "@/hooks/useNotificationSSE";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Users, GraduationCap, CalendarCheck,
@@ -43,8 +44,14 @@ const ROLE_BADGE_COLORS: Record<string, string> = {
   STUDENT: "bg-gray-500/20 text-gray-300",
 };
 
-function NotificationBell() {
-  const { unreadCount } = useNotificationSSE();
+const TYPE_ICON: Record<string, string> = {
+  INFO: "ℹ️",
+  SUCCESS: "✅",
+  WARNING: "⚠️",
+  DANGER: "🚨",
+};
+
+function NotificationBell({ unreadCount }: { unreadCount: number }) {
   return (
     <Link href="/notifications">
       <button className="relative p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
@@ -98,6 +105,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { tenant } = useTenant();
+  const { toast } = useToast();
+
+  const { unreadCount, incomingNotification } = useNotificationSSE();
+
+  useEffect(() => {
+    if (!incomingNotification) return;
+    const icon = TYPE_ICON[incomingNotification.type] ?? "🔔";
+    toast({
+      title: `${icon} ${incomingNotification.title}`,
+      description: incomingNotification.message,
+      variant: incomingNotification.type === "DANGER" ? "destructive" : "default",
+    });
+  }, [incomingNotification?.id]);
 
   const role = user?.role ?? "STUDENT";
   const navItems = ALL_NAV_ITEMS.filter(item => canAccessRoute(role, item.href));
@@ -199,7 +219,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-            <NotificationBell />
+            <NotificationBell unreadCount={unreadCount} />
           </div>
         </header>
 
