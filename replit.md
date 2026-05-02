@@ -43,7 +43,7 @@ A full-stack, production-ready School/Madrasa Management System (ERP) built as a
 | PARENT      | parent1@school.edu        | parent123     |
 | PARENT      | parent2@school.edu        | parent123     |
 
-## Modules (21+)
+## Modules (22+)
 
 1. **Dashboard** — Stats, revenue trend chart, AI daily summary (admin/teacher), live audit feed (admin)
 2. **Students** — CRUD, bulk CSV import, admission tracking
@@ -51,24 +51,31 @@ A full-stack, production-ready School/Madrasa Management System (ERP) built as a
 4. **Attendance** — Daily marking, QR code generation, RFID support
 5. **Subjects & Marks** — Subject management, exam results entry
 6. **Timetable** — Class schedule management
-7. **Finance** — Fee types, invoices, payment transactions, overdue cron
-8. **Notifications** — In-app notifications, bulk parent notifications
-9. **Audit Log** — Complete action history
-10. **Documents** — Student document storage (URL-based)
-11. **Report Card** — Student performance summary
-12. **Calendar** — Event management
-13. **Asset Management** — Hardware/equipment tracking
-14. **Parent Portal** — Parents see their children's info
-15. **Settings** — Profile view, password change with strength meter
-16. **Password Reset** — Token-based (dev: token shown in UI/logs)
-17. **Tenants** — Multi-tenant config, theme customization (SUPER_ADMIN only)
-18. **Users/Staff** — User management with RBAC
+7. **Finance** — Fee types, invoices, payment transactions, overdue cron, PDF export
+8. **Payroll** — Monthly staff salary management, bulk generate, approve/mark-paid workflow, individual payslip PDF download
+9. **Notifications** — In-app notifications, bulk parent notifications, SSE real-time updates
+10. **Audit Log** — Complete action history
+11. **Documents** — Student document storage (URL-based)
+12. **Report Card** — Student performance summary
+13. **Calendar** — Event management
+14. **Asset Management** — Hardware/equipment tracking
+15. **Parent Portal** — Parents see their children's info
+16. **Settings** — Profile view, password change with strength meter
+17. **Password Reset** — Token-based (dev: token shown in UI/logs)
+18. **Tenants** — Multi-tenant config, theme customization (SUPER_ADMIN only)
+19. **Users/Staff** — User management with RBAC
 
 ## RBAC (Role-Based Access Control)
 
 5 roles: `SUPER_ADMIN`, `TEACHER`, `ACCOUNTANT`, `PARENT`, `STUDENT`
 
 Each role sees only the nav items and routes it can access (enforced both frontend `canAccessRoute()` and backend middlewares).
+
+| Route      | SUPER_ADMIN | TEACHER | ACCOUNTANT | PARENT | STUDENT |
+|------------|-------------|---------|------------|--------|---------|
+| /payroll   | ✅          | ❌      | ✅         | ❌     | ❌      |
+| /finance   | ✅          | ❌      | ✅         | ❌     | ❌      |
+| /students  | ✅          | ✅      | ❌         | ❌     | ❌      |
 
 ## AI Features
 
@@ -115,6 +122,29 @@ Triggers that broadcast SSE updates:
 - `PUT /notifications/:id/read` — decrements count
 - `DELETE /notifications/:id` — decrements count
 
+## PDF Export Features
+
+### Finance PDF (`GET /api/finance/export`)
+Query params: `type` (invoices|transactions), `status`, `dateFrom`, `dateTo`
+- Branded A4 layout with school name header
+- Summary cards (totals, breakdowns)
+- Paginated colour-coded data table
+- `pdfkit` externalized in esbuild (avoids fontkit CJS bundling issues)
+
+### Payslip PDF (`GET /api/payroll/:id/payslip`)
+- Individual payslip for each staff member
+- Earnings + deductions side-by-side layout
+- Net salary highlighted banner
+- Status-aware (DRAFT/APPROVED/PAID with paid date)
+
+## Payroll Workflow
+
+1. **Generate** — Click "Bulk Generate" to create DRAFT records for all staff in a month
+2. **Edit** — Adjust individual salaries, allowances, deductions
+3. **Approve** — Admin approves each record (DRAFT → APPROVED)
+4. **Mark Paid** — Finance marks as paid (APPROVED → PAID); records `paidAt` timestamp
+5. **Payslip** — Download individual PDF payslip at any status
+
 ## API Routes
 
 All routes prefixed with `/api/`:
@@ -123,7 +153,7 @@ All routes prefixed with `/api/`:
 - `POST /auth/login` — JWT login
 - `GET  /auth/me` — Current user
 - `PUT  /auth/password` — Change password
-- `POST /auth/forgot-password` — Generate reset token (dev: returns token in response)
+- `POST /auth/forgot-password` — Generate reset token
 - `POST /auth/reset-password` — Use token to reset password
 - `GET  /tenants/config` — Public tenant theme config
 - `GET/POST/PUT/DELETE /tenants` — Tenant CRUD (SUPER_ADMIN)
@@ -137,7 +167,17 @@ All routes prefixed with `/api/`:
 - `GET/POST/PUT/DELETE /timetable` — Timetable slots
 - `GET/POST /fee-types` — Fee types
 - `GET/POST /invoices` — Invoices
+- `POST /invoices/:id/notify` — Send payment reminder
 - `GET/POST /transactions` — Payment transactions
+- `GET /finance/export` — PDF export (invoices or transactions)
+- `GET /payroll` — List payroll records (filter: month, year, status)
+- `POST /payroll` — Create single payroll record
+- `POST /payroll/generate` — Bulk generate for all staff in a month
+- `PUT /payroll/:id` — Update salary/allowances/deductions
+- `PATCH /payroll/:id/approve` — Approve payroll (SUPER_ADMIN)
+- `PATCH /payroll/:id/mark-paid` — Mark as paid
+- `DELETE /payroll/:id` — Delete DRAFT record
+- `GET /payroll/:id/payslip` — Download payslip PDF
 - `GET /dashboard/stats` — Dashboard KPIs
 - `GET /dashboard/attendance-summary` — Today's attendance by class
 - `GET /dashboard/revenue-trend` — 6-month revenue chart data
@@ -145,6 +185,7 @@ All routes prefixed with `/api/`:
 - `GET /dashboard/ai-summary` — AI-powered daily brief
 - `GET/POST/DELETE /notifications` — Notifications + bulk parent notify
 - `POST /notifications/bulk` — Bulk parent notification
+- `GET /notifications/stream` — SSE real-time stream
 - `GET /audit-logs` — Audit trail
 - `GET/POST /calendar-events` — Calendar events
 - `GET/POST/DELETE /students/:id/documents` — Student documents
@@ -159,29 +200,38 @@ All routes prefixed with `/api/`:
 - `artifacts/api-server/src/lib/auth.ts` — Custom JWT (HMAC-SHA256, no jsonwebtoken dep)
 - `artifacts/api-server/src/lib/overdue-cron.ts` — Overdue invoice cron (every 6h)
 - `artifacts/api-server/src/routes/ai-summary/index.ts` — AI daily summary route
+- `artifacts/api-server/src/routes/finance/export.ts` — Finance PDF export
+- `artifacts/api-server/src/routes/payroll/index.ts` — Payroll CRUD + payslip PDF
+- `artifacts/api-server/build.mjs` — esbuild config (pdfkit/fontkit externalized)
 - `artifacts/school-erp/src/App.tsx` — All frontend routes
 - `artifacts/school-erp/src/lib/auth.tsx` — Auth context, ROLE_CONFIG, canAccessRoute
 - `artifacts/school-erp/src/lib/tenant.tsx` — Tenant context, theme injection
 - `artifacts/school-erp/src/lib/syncEngine.ts` — Dexie offline sync engine
 - `artifacts/school-erp/src/hooks/useSyncEngine.ts` — Sync state hook
+- `artifacts/school-erp/src/hooks/useNotificationSSE.ts` — SSE hook
 - `artifacts/school-erp/src/components/Layout.tsx` — Sidebar, offline indicator, notification bell
+- `artifacts/school-erp/src/pages/PayrollPage.tsx` — Payroll management UI
 - `lib/db/src/schema/index.ts` — All Drizzle schema exports
+- `lib/db/src/schema/payroll.ts` — Payroll DB tables
 
 ## Common Commands
 
 ```bash
-# Start API server
+# Start API server (handled by Replit workflow)
 pnpm --filter @workspace/api-server run dev
 
-# Start frontend
+# Start frontend (handled by Replit workflow)
 pnpm --filter @workspace/school-erp run dev
 
-# TypeCheck all
+# TypeCheck all packages
 pnpm run typecheck
 
-# DB schema push
+# Push DB schema changes
 pnpm --filter @workspace/db run push
 
-# Regenerate API client
+# Regenerate API client from OpenAPI spec
 pnpm --filter @workspace/api-spec run codegen
+
+# Build API server only
+pnpm --filter @workspace/api-server run build
 ```

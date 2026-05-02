@@ -27,6 +27,7 @@ import AttendanceQRPage from "@/pages/AttendanceQRPage";
 import ReportCardPage from "@/pages/ReportCardPage";
 import AssetManagementPage from "@/pages/AssetManagementPage";
 import TenantsPage from "@/pages/TenantsPage";
+import PayrollPage from "@/pages/PayrollPage";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -113,6 +114,9 @@ function Router() {
       </Route>
       <Route path="/tenants">
         <ProtectedRoute component={TenantsPage} route="/tenants" />
+      </Route>
+      <Route path="/payroll">
+        <ProtectedRoute component={PayrollPage} route="/payroll" />
       </Route>
       <Route path="/">
         {token ? <Redirect to="/dashboard" /> : <Redirect to="/login" />}

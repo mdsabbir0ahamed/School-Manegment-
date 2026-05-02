@@ -12,7 +12,7 @@ import {
   Banknote, BookOpen, Settings, LogOut, Menu, X, School,
   ChevronRight, ShieldCheck, CalendarDays, Clock, Bell,
   Sun, Moon, Home, QrCode, FolderOpen, FileText, Cpu,
-  Building2, WifiOff, RefreshCw,
+  Building2, WifiOff, RefreshCw, Wallet,
 } from "lucide-react";
 
 const ALL_NAV_ITEMS = [
@@ -24,6 +24,7 @@ const ALL_NAV_ITEMS = [
   { href: "/timetable",      label: "Timetable",        icon: Clock },
   { href: "/qr",             label: "QR Codes",         icon: QrCode },
   { href: "/finance",        label: "Finance",          icon: Banknote },
+  { href: "/payroll",        label: "Payroll",          icon: Wallet },
   { href: "/classes",        label: "Classes",          icon: BookOpen },
   { href: "/documents",      label: "Documents",        icon: FolderOpen },
   { href: "/report-card",    label: "Report Card",      icon: FileText },
