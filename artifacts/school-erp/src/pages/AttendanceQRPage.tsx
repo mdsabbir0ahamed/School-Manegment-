@@ -69,14 +69,14 @@ function StudentQRCard({ student }: { student: Student }) {
 }
 
 export default function AttendanceQRPage() {
-  const [classFilter, setClassFilter] = useState("");
+  const [classFilter, setClassFilter] = useState("all");
   const [search, setSearch] = useState("");
   const printRef = useRef<HTMLDivElement>(null);
 
   const { data: classesData } = useListClasses();
   const { data: studentsData, isLoading } = useListStudents({
     limit: 200, offset: 0,
-    ...(classFilter ? { classId: parseInt(classFilter) } : {}),
+    ...(classFilter && classFilter !== "all" ? { classId: parseInt(classFilter) } : {}),
     ...(search ? { search } : {}),
   });
 
@@ -113,7 +113,7 @@ export default function AttendanceQRPage() {
                   <SelectValue placeholder="All classes" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All classes</SelectItem>
+                  <SelectItem value="all">All classes</SelectItem>
                   {(classesData?.classes ?? []).map(c => (
                     <SelectItem key={c.id} value={String(c.id)}>
                       {c.name}{c.section ? ` - ${c.section}` : ""}

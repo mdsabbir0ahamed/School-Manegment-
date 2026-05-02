@@ -64,7 +64,7 @@ function SubjectDialog({ subject, onClose }: { subject?: Subject; onClose: () =>
   const [name, setName] = useState(subject?.name ?? "");
   const [code, setCode] = useState(subject?.code ?? "");
   const [description, setDescription] = useState(subject?.description ?? "");
-  const [classId, setClassId] = useState(subject?.classId ? String(subject.classId) : "");
+  const [classId, setClassId] = useState(subject?.classId ? String(subject.classId) : "all");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -74,13 +74,13 @@ function SubjectDialog({ subject, onClose }: { subject?: Subject; onClose: () =>
       if (subject) {
         await customFetch(`/api/subjects/${subject.id}`, {
           method: "PUT",
-          body: JSON.stringify({ name, code, description: description || null, classId: classId ? parseInt(classId) : null }),
+          body: JSON.stringify({ name, code, description: description || null, classId: (classId && classId !== "all") ? parseInt(classId) : null }),
         });
         toast({ title: "Subject updated" });
       } else {
         await customFetch("/api/subjects", {
           method: "POST",
-          body: JSON.stringify({ name, code, description: description || null, classId: classId ? parseInt(classId) : null }),
+          body: JSON.stringify({ name, code, description: description || null, classId: (classId && classId !== "all") ? parseInt(classId) : null }),
         });
         toast({ title: "Subject created" });
       }
@@ -117,7 +117,7 @@ function SubjectDialog({ subject, onClose }: { subject?: Subject; onClose: () =>
             <Select value={classId} onValueChange={setClassId}>
               <SelectTrigger><SelectValue placeholder="All classes" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All classes</SelectItem>
+                <SelectItem value="all">All classes</SelectItem>
                 {(classesData?.classes ?? []).map(c => (
                   <SelectItem key={c.id} value={String(c.id)}>{c.name}{c.section ? ` - ${c.section}` : ""}</SelectItem>
                 ))}
@@ -270,11 +270,11 @@ export default function SubjectsMarksPage() {
   const [editSubject, setEditSubject] = useState<Subject | null>(null);
   const [showAddSubject, setShowAddSubject] = useState(false);
   const [showAddMark, setShowAddMark] = useState(false);
-  const [filterStudent, setFilterStudent] = useState("");
+  const [filterStudent, setFilterStudent] = useState("all");
   const { data: subjectsData, isLoading: subjectsLoading } = useSubjects();
   const { data: studentsData } = useListStudents({ limit: 200, offset: 0 });
   const { data: resultsData, isLoading: resultsLoading } = useExamResults(
-    filterStudent ? parseInt(filterStudent) : undefined
+    (filterStudent && filterStudent !== "all") ? parseInt(filterStudent) : undefined
   );
 
   const deleteSubject = async (id: number) => {
@@ -377,7 +377,7 @@ export default function SubjectsMarksPage() {
               <Select value={filterStudent} onValueChange={setFilterStudent}>
                 <SelectTrigger className="max-w-xs"><SelectValue placeholder="All students" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All students</SelectItem>
+                  <SelectItem value="all">All students</SelectItem>
                   {(studentsData?.students ?? []).map(s => (
                     <SelectItem key={s.id} value={String(s.id)}>{s.firstName} {s.lastName}</SelectItem>
                   ))}

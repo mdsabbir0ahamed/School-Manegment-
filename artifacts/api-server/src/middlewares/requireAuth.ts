@@ -5,6 +5,7 @@ export interface AuthRequest extends Request {
   userId?: number;
   userRole?: string;
   userEmail?: string;
+  tenantId?: number;
 }
 
 export function requireAuth(

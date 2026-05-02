@@ -19,6 +19,7 @@ import passwordResetRouter from "./password-reset/index.js";
 import parentStudentsRouter from "./parent-students/index.js";
 import tenantsRouter from "./tenants/index.js";
 import hardwareRouter from "./hardware/index.js";
+import aiSummaryRouter from "./ai-summary/index.js";
 
 const router: IRouter = Router();
 
@@ -42,5 +43,6 @@ router.use(documentsRouter);
 router.use(passwordResetRouter);
 router.use(parentStudentsRouter);
 router.use(hardwareRouter);
+router.use(aiSummaryRouter);
 
 export default router;

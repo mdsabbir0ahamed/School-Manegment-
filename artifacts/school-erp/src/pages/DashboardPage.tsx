@@ -10,6 +10,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
@@ -17,7 +18,7 @@ import {
 import {
   GraduationCap, Users, BookOpen, CalendarCheck,
   Banknote, AlertCircle, TrendingUp, UserPlus,
-  ShieldCheck, ArrowRight, Radio,
+  ShieldCheck, ArrowRight, Sparkles, RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
@@ -33,6 +34,23 @@ interface AuditLog {
   entityId: string | null;
   description: string | null;
   createdAt: string;
+}
+
+interface AiSummaryResponse {
+  summary: string;
+  generatedAt: string;
+  metrics: {
+    totalStudents: number;
+    totalTeachers: number;
+    attendanceRate: number;
+    todayPresent: number;
+    todayAbsent: number;
+    todayLate: number;
+    pendingInvoices: number;
+    overdueInvoices: number;
+    monthlyRevenue: number;
+    newAdmissions: number;
+  };
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -91,6 +109,86 @@ function StatCard({ title, value, icon: Icon, sub, color }: {
             <Icon className={cn("h-4.5 w-4.5", color ? "text-white" : "text-primary")} />
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── AI Daily Summary ────────────────────────────────────────────────────────
+
+function AiDailySummary() {
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<AiSummaryResponse>({
+    queryKey: ["ai-daily-summary"],
+    queryFn: () => customFetch("/api/dashboard/ai-summary"),
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  return (
+    <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-semibold">AI Daily Summary</CardTitle>
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-primary border-primary/30">
+              Powered by AI
+            </Badge>
+          </div>
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            title="Refresh AI summary"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+          </button>
+        </div>
+        {data?.generatedAt && (
+          <p className="text-[10px] text-muted-foreground">
+            Generated {timeAgo(data.generatedAt)}
+          </p>
+        )}
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-3.5 w-full" />
+            <Skeleton className="h-3.5 w-4/5" />
+            <Skeleton className="h-3.5 w-3/4" />
+            <Skeleton className="h-3.5 w-5/6" />
+          </div>
+        ) : isError ? (
+          <div className="flex flex-col items-center gap-2 py-3 text-center">
+            <p className="text-xs text-muted-foreground">Could not generate AI summary</p>
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => refetch()}>
+              Try again
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm leading-relaxed text-foreground/80">{data?.summary}</p>
+        )}
+
+        {data?.metrics && (
+          <div className="mt-3 grid grid-cols-3 gap-2 pt-3 border-t border-border/50">
+            <div className="text-center">
+              <p className="text-lg font-bold tabular-nums text-primary">{data.metrics.attendanceRate}%</p>
+              <p className="text-[10px] text-muted-foreground">Attendance</p>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-bold tabular-nums text-amber-600">{data.metrics.pendingInvoices}</p>
+              <p className="text-[10px] text-muted-foreground">Pending Bills</p>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-bold tabular-nums text-green-600">
+                ৳{(data.metrics.monthlyRevenue / 1000).toFixed(1)}k
+              </p>
+              <p className="text-[10px] text-muted-foreground">Monthly Rev.</p>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -186,6 +284,11 @@ export default function DashboardPage() {
           {new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
         </p>
       </div>
+
+      {/* AI Daily Summary — shown to SUPER_ADMIN and TEACHER */}
+      {(isSuperAdmin || user?.role === "TEACHER") && (
+        <AiDailySummary />
+      )}
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
