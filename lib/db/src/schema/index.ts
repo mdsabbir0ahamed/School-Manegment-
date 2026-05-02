@@ -15,3 +15,4 @@ export * from "./password-reset";
 export * from "./parent-students";
 export * from "./hardware";
 export * from "./payroll";
+export * from "./reminder-settings";

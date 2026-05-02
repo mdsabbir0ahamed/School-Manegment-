@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startOverdueCron } from "./lib/overdue-cron.js";
+import { startReminderCron } from "./lib/reminder-cron.js";
 
 const rawPort = process.env["PORT"];
 
@@ -24,4 +25,5 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startOverdueCron();
+  startReminderCron();
 });

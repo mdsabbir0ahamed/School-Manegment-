@@ -53,7 +53,8 @@ A full-stack, production-ready School/Madrasa Management System (ERP) built as a
 6. **Timetable** — Class schedule management
 7. **Finance** — Fee types, invoices, payment transactions, overdue cron, PDF export
 8. **Payroll** — Monthly staff salary management, bulk generate, approve/mark-paid workflow, individual payslip PDF download
-9. **Notifications** — In-app notifications, bulk parent notifications, SSE real-time updates
+9. **Fee Reminder Scheduler** — Configurable daily cron that auto-sends payment reminders to parents/staff based on invoice due-date offsets (before/after); manual "Send Now" trigger; persisted settings per tenant
+10. **Notifications** — In-app notifications, bulk parent notifications, SSE real-time updates
 10. **Audit Log** — Complete action history
 11. **Documents** — Student document storage (URL-based)
 12. **Report Card** — Student performance summary
@@ -137,6 +138,23 @@ Query params: `type` (invoices|transactions), `status`, `dateFrom`, `dateTo`
 - Net salary highlighted banner
 - Status-aware (DRAFT/APPROVED/PAID with paid date)
 
+## Fee Reminder Scheduler
+
+Configurable daily cron that auto-sends in-app payment reminders. Persisted in `reminder_settings` table (one row per tenant).
+
+**How it runs:**
+- Starts on server boot; checks every hour but only fires once per calendar day
+- For each configured day offset, computes `today - offset` as the target due date
+- Finds all PENDING/OVERDUE invoices with that exact due date
+- Sends an in-app notification to each linked parent + all finance staff
+- Updates `lastRunAt` and `lastRunCount` in DB
+
+**Default windows:** 3 days before, 1 day before, on due date, 1 day after, 3 days after, 7 days after
+
+**Manual trigger:** `POST /api/reminder-settings/trigger` bypasses the daily-limit check — useful for testing or urgent batches.
+
+**Settings UI:** Finance page → "Reminders" tab — toggle enable/disable, click day-offset chips, Save Changes, or Send Now.
+
 ## Payroll Workflow
 
 1. **Generate** — Click "Bulk Generate" to create DRAFT records for all staff in a month
@@ -178,6 +196,9 @@ All routes prefixed with `/api/`:
 - `PATCH /payroll/:id/mark-paid` — Mark as paid
 - `DELETE /payroll/:id` — Delete DRAFT record
 - `GET /payroll/:id/payslip` — Download payslip PDF
+- `GET /reminder-settings` — Get fee reminder scheduler config
+- `PUT /reminder-settings` — Update enabled flag and day-offset windows
+- `POST /reminder-settings/trigger` — Manually force a reminder run
 - `GET /dashboard/stats` — Dashboard KPIs
 - `GET /dashboard/attendance-summary` — Today's attendance by class
 - `GET /dashboard/revenue-trend` — 6-month revenue chart data

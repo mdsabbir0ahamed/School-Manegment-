@@ -22,6 +22,7 @@ import tenantsRouter from "./tenants/index.js";
 import hardwareRouter from "./hardware/index.js";
 import aiSummaryRouter from "./ai-summary/index.js";
 import payrollRouter from "./payroll/index.js";
+import reminderSettingsRouter from "./finance/reminder-settings.js";
 
 const router: IRouter = Router();
 
@@ -48,5 +49,6 @@ router.use(parentStudentsRouter);
 router.use(hardwareRouter);
 router.use(aiSummaryRouter);
 router.use(payrollRouter);
+router.use(reminderSettingsRouter);
 
 export default router;

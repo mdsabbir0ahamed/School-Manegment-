@@ -229,6 +229,35 @@ pnpm --filter @workspace/db run push-force
 
 ---
 
+## Fee Reminder Scheduler
+
+The scheduler lives entirely in the API server — no external cron service needed.
+
+| File | Purpose |
+|------|---------|
+| `lib/db/src/schema/reminder-settings.ts` | `reminder_settings` table (isEnabled, reminderDays JSON, lastRunAt) |
+| `artifacts/api-server/src/lib/reminder-cron.ts` | Core logic: `runReminderCron(force?)` + `startReminderCron()` |
+| `artifacts/api-server/src/routes/finance/reminder-settings.ts` | REST API: GET, PUT, POST /trigger |
+
+**To change the check interval** (currently 1 hour with once-per-day guard):
+
+```typescript
+// reminder-cron.ts
+const ONE_HOUR = 60 * 60 * 1000;
+setInterval(() => runReminderCron(), ONE_HOUR);
+```
+
+**To add a new day-offset option**, update `OFFSET_OPTIONS` in `FinancePage.tsx` — the backend accepts any integer from -30 to 60 and stores as JSON.
+
+**To test locally** without waiting for invoices with matching due dates, use the trigger endpoint:
+
+```bash
+curl -X POST http://localhost:80/api/reminder-settings/trigger \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
 ## Deployment
 
 The app is deployed via Replit's built-in deployment. The shared reverse proxy routes:
