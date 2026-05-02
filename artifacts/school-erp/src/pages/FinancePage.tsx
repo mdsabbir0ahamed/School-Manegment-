@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  useListInvoices, useCreateInvoice, useListFeeTypes, useCreateFeeType,
+  useListInvoices, useCreateInvoice, useListFeeTypes,
   useListTransactions, useCreateTransaction, useListStudents,
   getListInvoicesQueryKey, getListTransactionsQueryKey,
 } from "@workspace/api-client-react";
@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, Loader2, CreditCard, ChevronLeft, ChevronRight, Bell, CheckCircle2 } from "lucide-react";
+import { Plus, Loader2, CreditCard, ChevronLeft, ChevronRight, Bell, CheckCircle2, Download } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
 
 const PAGE_SIZE = 15;
@@ -48,6 +48,113 @@ const paymentSchema = z.object({
   notes: z.string().optional(),
 });
 type PaymentForm = z.infer<typeof paymentSchema>;
+
+// ── Export PDF Dialog ──────────────────────────────────────────────────────
+
+function ExportPdfDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [exportType, setExportType] = useState("invoices");
+  const [status, setStatus] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleExport = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ type: exportType });
+      if (status && status !== "all") params.set("status", status);
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
+
+      const token = localStorage.getItem("erp_token") ?? "";
+      const res = await fetch(`/api/finance/export?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error("Export failed");
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${exportType}-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({ title: "PDF exported", description: `${exportType} report downloaded successfully.` });
+      onClose();
+    } catch {
+      toast({ title: "Export failed", description: "Could not generate PDF. Try again.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Download className="h-4 w-4" /> Export PDF Report
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-1">
+          <div className="space-y-1.5">
+            <Label>Report Type</Label>
+            <Select value={exportType} onValueChange={setExportType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="invoices">Invoices</SelectItem>
+                <SelectItem value="transactions">Transactions</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {exportType === "invoices" && (
+            <div className="space-y-1.5">
+              <Label>Status Filter</Label>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  {["PAID", "PENDING", "OVERDUE", "CANCELLED"].map(s => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Date From</Label>
+              <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Date To</Label>
+              <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Leave dates empty to export all records. The report will be downloaded as a PDF.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={handleExport} disabled={loading}>
+            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating…</> : <><Download className="mr-2 h-4 w-4" /> Export PDF</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Create Invoice Dialog ──────────────────────────────────────────────────
 
 function CreateInvoiceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
@@ -140,6 +247,8 @@ function CreateInvoiceDialog({ open, onClose }: { open: boolean; onClose: () => 
   );
 }
 
+// ── Record Payment Dialog ──────────────────────────────────────────────────
+
 function RecordPaymentDialog({ invoice, open, onClose }: { invoice: Invoice | null; open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -186,7 +295,7 @@ function RecordPaymentDialog({ invoice, open, onClose }: { invoice: Invoice | nu
           </div>
           <div className="space-y-1">
             <Label>Payment Method *</Label>
-            <Select defaultValue="CASH" onValueChange={v => setValue("method", v as any)}>
+            <Select defaultValue="CASH" onValueChange={v => setValue("method", v as PaymentForm["method"])}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {["CASH", "BANK_TRANSFER", "MOBILE_BANKING", "CHEQUE"].map(m => (
@@ -216,8 +325,11 @@ function RecordPaymentDialog({ invoice, open, onClose }: { invoice: Invoice | nu
   );
 }
 
+// ── Main Page ──────────────────────────────────────────────────────────────
+
 export default function FinancePage() {
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [page, setPage] = useState(0);
@@ -262,9 +374,14 @@ export default function FinancePage() {
           <h1 className="text-xl font-bold">Finance</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Invoices, payments, and transactions</p>
         </div>
-        <Button onClick={() => setInvoiceDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Invoice
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setExportDialogOpen(true)}>
+            <Download className="mr-2 h-4 w-4" /> Export PDF
+          </Button>
+          <Button onClick={() => setInvoiceDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Create Invoice
+          </Button>
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -422,6 +539,7 @@ export default function FinancePage() {
 
       <CreateInvoiceDialog open={invoiceDialogOpen} onClose={() => setInvoiceDialogOpen(false)} />
       <RecordPaymentDialog invoice={paymentInvoice} open={!!paymentInvoice} onClose={() => setPaymentInvoice(null)} />
+      <ExportPdfDialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} />
     </div>
   );
 }
