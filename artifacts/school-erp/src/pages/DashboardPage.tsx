@@ -1,0 +1,317 @@
+import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import {
+  useGetDashboardStats,
+  useGetRevenueTrend,
+  useGetAttendanceSummary,
+  useGetRecentActivity,
+  customFetch,
+} from "@workspace/api-client-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend,
+} from "recharts";
+import {
+  GraduationCap, Users, BookOpen, CalendarCheck,
+  Banknote, AlertCircle, TrendingUp, UserPlus,
+  ShieldCheck, ArrowRight, Radio,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth";
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+interface AuditLog {
+  id: number;
+  userEmail: string | null;
+  userRole: string | null;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  description: string | null;
+  createdAt: string;
+}
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const ACTION_DOT: Record<string, string> = {
+  CREATE: "bg-green-500",
+  UPDATE: "bg-yellow-500",
+  DELETE: "bg-red-500",
+  PAYMENT: "bg-purple-500",
+  BULK_ATTENDANCE: "bg-blue-500",
+  LOGIN: "bg-slate-400",
+  LOGIN_FAILED: "bg-red-400",
+};
+
+const ACTION_BADGE: Record<string, string> = {
+  CREATE: "bg-green-100 text-green-700",
+  UPDATE: "bg-yellow-100 text-yellow-700",
+  DELETE: "bg-red-100 text-red-700",
+  PAYMENT: "bg-purple-100 text-purple-700",
+  BULK_ATTENDANCE: "bg-blue-100 text-blue-700",
+  LOGIN: "bg-slate-100 text-slate-600",
+  LOGIN_FAILED: "bg-red-100 text-red-500",
+};
+
+const activityTypeColors: Record<string, string> = {
+  ADMISSION: "bg-blue-500",
+  PAYMENT: "bg-green-500",
+  ATTENDANCE: "bg-yellow-500",
+  USER_CREATED: "bg-purple-500",
+};
+
+function timeAgo(iso: string): string {
+  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// ── Stat Card ──────────────────────────────────────────────────────────────
+
+function StatCard({ title, value, icon: Icon, sub, color }: {
+  title: string; value: string | number; icon: React.ComponentType<{ className?: string }>;
+  sub?: string; color?: string;
+}) {
+  return (
+    <Card>
+      <CardContent className="pt-5 pb-5">
+        <div className="flex items-start justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</p>
+            <p className="text-2xl font-bold tabular-nums">{value}</p>
+            {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+          </div>
+          <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", color ?? "bg-primary/10")}>
+            <Icon className={cn("h-4.5 w-4.5", color ? "text-white" : "text-primary")} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Live Audit Feed ────────────────────────────────────────────────────────
+
+function LiveAuditFeed() {
+  const { data, isLoading } = useQuery<{ logs: AuditLog[]; total: number }>({
+    queryKey: ["dashboard-audit-feed"],
+    queryFn: () => customFetch("/api/audit-logs?limit=5"),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+
+  return (
+    <Card className="flex flex-col">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold">Live Audit Feed</CardTitle>
+            <span className="flex items-center gap-1 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+              Live
+            </span>
+          </div>
+          <Link
+            href="/audit"
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            View all
+            <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+        <p className="text-xs text-muted-foreground">Last 5 system events · refreshes every 30s</p>
+      </CardHeader>
+      <CardContent className="flex-1 space-y-0 divide-y divide-border">
+        {isLoading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 py-2.5">
+              <Skeleton className="h-2 w-2 rounded-full shrink-0" />
+              <div className="flex-1 space-y-1">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-2.5 w-24" />
+              </div>
+              <Skeleton className="h-4 w-14 rounded-full" />
+            </div>
+          ))
+        ) : data?.logs.length === 0 ? (
+          <p className="py-8 text-center text-xs text-muted-foreground">No audit events yet</p>
+        ) : (
+          data?.logs.map(log => (
+            <div key={log.id} className="flex items-start gap-3 py-2.5">
+              <div className={cn("mt-1 h-2 w-2 rounded-full shrink-0", ACTION_DOT[log.action] ?? "bg-muted-foreground")} />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-foreground truncate leading-tight">
+                  {log.description ?? `${log.action} ${log.entity}`}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {log.userEmail ?? "System"} · {timeAgo(log.createdAt)}
+                </p>
+              </div>
+              <span className={cn(
+                "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
+                ACTION_BADGE[log.action] ?? "bg-gray-100 text-gray-600"
+              )}>
+                {log.action.replace("_", " ")}
+              </span>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Dashboard Page ─────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const { user } = useAuth();
+  const { data: stats, isLoading: statsLoading } = useGetDashboardStats();
+  const { data: trend, isLoading: trendLoading } = useGetRevenueTrend();
+  const { data: attendance } = useGetAttendanceSummary();
+  const { data: activity } = useGetRecentActivity();
+
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+
+  return (
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      <div>
+        <h1 className="text-xl font-bold">Dashboard Overview</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          {new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+        </p>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {statsLoading ? (
+          Array.from({ length: 8 }).map((_, i) => (
+            <Card key={i}><CardContent className="pt-5 pb-5"><Skeleton className="h-16 w-full" /></CardContent></Card>
+          ))
+        ) : stats ? (
+          <>
+            <StatCard title="Total Students" value={stats.totalStudents.toLocaleString()} icon={GraduationCap} sub={`${stats.activeStudents} active`} />
+            <StatCard title="Teachers" value={stats.totalTeachers} icon={Users} sub="Teaching staff" />
+            <StatCard title="Classes" value={stats.totalClasses} icon={BookOpen} sub="Active classes" />
+            <StatCard title="Attendance Today" value={`${stats.todayAttendanceRate}%`} icon={CalendarCheck} sub="Present rate" />
+            <StatCard title="Monthly Revenue" value={`৳${stats.monthlyRevenue.toLocaleString()}`} icon={Banknote} sub="This month" />
+            <StatCard title="Total Revenue" value={`৳${stats.totalRevenue.toLocaleString()}`} icon={TrendingUp} sub="All time" />
+            <StatCard title="Pending Invoices" value={stats.pendingInvoices} icon={AlertCircle} sub={`${stats.overdueInvoices} overdue`} />
+            <StatCard title="New Admissions" value={stats.newAdmissionsThisMonth} icon={UserPlus} sub="This month" />
+          </>
+        ) : null}
+      </div>
+
+      {/* Charts row: Revenue trend + activity/audit */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Revenue trend chart */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">Revenue Trend</CardTitle>
+            <p className="text-xs text-muted-foreground">Collected vs pending over 6 months</p>
+          </CardHeader>
+          <CardContent>
+            {trendLoading ? (
+              <Skeleton className="h-48 w-full" />
+            ) : trend ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={trend.months} margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false}
+                    tickFormatter={v => `৳${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12, border: "1px solid hsl(var(--border))", borderRadius: 8 }}
+                    formatter={(v: number) => [`৳${v.toLocaleString()}`, undefined]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Line type="monotone" dataKey="collected" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={false} name="Collected" />
+                  <Line type="monotone" dataKey="pending" stroke="hsl(var(--chart-3))" strokeWidth={2} dot={false} strokeDasharray="5 5" name="Pending" />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        {/* Right card: Audit Feed for SUPER_ADMIN, recent activity otherwise */}
+        {isSuperAdmin ? (
+          <LiveAuditFeed />
+        ) : (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold">Recent Activity</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 max-h-56 overflow-y-auto">
+              {activity?.activities.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">No recent activity</p>
+              ) : activity?.activities.map(a => (
+                <div key={a.id} className="flex items-start gap-2.5">
+                  <div className={cn("mt-0.5 h-2 w-2 rounded-full shrink-0", activityTypeColors[a.type] ?? "bg-muted-foreground")} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium truncate">{a.description}</p>
+                    <p className="text-[10px] text-muted-foreground">{a.entityName} · {new Date(a.timestamp).toLocaleDateString()}</p>
+                  </div>
+                  {a.amount != null && (
+                    <span className="text-xs font-medium text-green-600">৳{a.amount.toLocaleString()}</span>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Attendance summary table */}
+      {attendance && attendance.summary.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">Today's Attendance by Class</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Overall: {attendance.overall.present}/{attendance.overall.total} ({attendance.overall.rate}%)
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    {["Class", "Total", "Present", "Absent", "Late", "Rate"].map(h => (
+                      <th key={h} className="pb-2 pr-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {attendance.summary.map(row => (
+                    <tr key={row.classId} className="text-sm">
+                      <td className="py-2 pr-4 font-medium">{row.className}</td>
+                      <td className="py-2 pr-4 tabular-nums">{row.total}</td>
+                      <td className="py-2 pr-4 tabular-nums text-green-600">{row.present}</td>
+                      <td className="py-2 pr-4 tabular-nums text-red-500">{row.absent}</td>
+                      <td className="py-2 pr-4 tabular-nums text-yellow-600">{row.late}</td>
+                      <td className="py-2 pr-4">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 bg-muted rounded-full h-1.5 max-w-16">
+                            <div
+                              className="bg-primary h-1.5 rounded-full"
+                              style={{ width: `${row.rate}%` }}
+                            />
+                          </div>
+                          <span className="tabular-nums text-xs">{row.rate}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}

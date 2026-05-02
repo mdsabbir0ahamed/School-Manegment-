@@ -1,31 +1,32 @@
 kind = "web"
-previewPath = "/"
-title = "Meeting Notes"
-version = "1.0.0"
-id = "artifacts/meeting-notes"
-router = "path"
+  previewPath = "/meeting-notes"
+  title = "Meeting Notes"
+  version = "1.0.0"
+  id = "artifacts/meeting-notes"
+  router = "path"
 
-[[integratedSkills]]
-name = "react-vite"
-version = "1.0.0"
+  [[integratedSkills]]
+  name = "react-vite"
+  version = "1.0.0"
 
-[[services]]
-name = "web"
-paths = [ "/" ]
-localPort = 23197
+  [[services]]
+  name = "web"
+  paths = [ "/meeting-notes" ]
+  localPort = 23197
 
-[services.development]
-run = "pnpm --filter @workspace/meeting-notes run dev"
+  [services.development]
+  run = "pnpm --filter @workspace/meeting-notes run dev"
 
-[services.production]
-build = [ "pnpm", "--filter", "@workspace/meeting-notes", "run", "build" ]
-publicDir = "artifacts/meeting-notes/dist/public"
-serve = "static"
+  [services.production]
+  build = [ "pnpm", "--filter", "@workspace/meeting-notes", "run", "build" ]
+  publicDir = "artifacts/meeting-notes/dist/public"
+  serve = "static"
 
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
+  [[services.production.rewrites]]
+  from = "/*"
+  to = "/index.html"
 
-[services.env]
-PORT = "23197"
-BASE_PATH = "/"
+  [services.env]
+  PORT = "23197"
+  BASE_PATH = "/meeting-notes"
+  

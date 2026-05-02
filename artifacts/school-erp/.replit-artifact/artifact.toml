@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Smart School ERP"
+version = "1.0.0"
+id = "artifacts/school-erp"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23757
+
+[services.development]
+run = "pnpm --filter @workspace/school-erp run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/school-erp", "run", "build" ]
+publicDir = "artifacts/school-erp/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23757"
+BASE_PATH = "/"

@@ -3,20 +3,34 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Smart School/Madrasa ERP API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: users
+    description: User management
+  - name: students
+    description: Student management
+  - name: classes
+    description: Class and section management
+  - name: attendance
+    description: Attendance management
+  - name: finance
+    description: Finance, fees, invoices, transactions
+  - name: dashboard
+    description: Dashboard statistics and summaries
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,7 +38,717 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── AUTH ──────────────────────────────────────────────────────────────────
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginBody"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  # ── USERS ─────────────────────────────────────────────────────────────────
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List all users
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: query
+          schema:
+            $ref: "#/components/schemas/UserRole"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserListResponse"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a new user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserBody"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /users/{id}:
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get user by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    put:
+      operationId: updateUser
+      tags: [users]
+      summary: Update user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserBody"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: User deleted
+
+  # ── CLASSES ───────────────────────────────────────────────────────────────
+  /classes:
+    get:
+      operationId: listClasses
+      tags: [classes]
+      summary: List all classes
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of classes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassListResponse"
+    post:
+      operationId: createClass
+      tags: [classes]
+      summary: Create a new class
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClassBody"
+      responses:
+        "201":
+          description: Class created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Class"
+
+  /classes/{id}:
+    get:
+      operationId: getClass
+      tags: [classes]
+      summary: Get class by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Class
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Class"
+    put:
+      operationId: updateClass
+      tags: [classes]
+      summary: Update class
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClassBody"
+      responses:
+        "200":
+          description: Updated class
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Class"
+
+  # ── STUDENTS ──────────────────────────────────────────────────────────────
+  /students:
+    get:
+      operationId: listStudents
+      tags: [students]
+      summary: List students with optional filters
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: classId
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/StudentStatus"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of students
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentListResponse"
+    post:
+      operationId: createStudent
+      tags: [students]
+      summary: Admit a new student
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStudentBody"
+      responses:
+        "201":
+          description: Student admitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Student"
+
+  /students/{id}:
+    get:
+      operationId: getStudent
+      tags: [students]
+      summary: Get student by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Student
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Student"
+    put:
+      operationId: updateStudent
+      tags: [students]
+      summary: Update student
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStudentBody"
+      responses:
+        "200":
+          description: Updated student
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Student"
+    delete:
+      operationId: deleteStudent
+      tags: [students]
+      summary: Delete student
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Student deleted
+
+  # ── ATTENDANCE ────────────────────────────────────────────────────────────
+  /attendance:
+    get:
+      operationId: listAttendance
+      tags: [attendance]
+      summary: List attendance records
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: studentId
+          in: query
+          schema:
+            type: integer
+        - name: classId
+          in: query
+          schema:
+            type: integer
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Attendance records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttendanceListResponse"
+    post:
+      operationId: markAttendance
+      tags: [attendance]
+      summary: Mark attendance for a student
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkAttendanceBody"
+      responses:
+        "201":
+          description: Attendance marked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attendance"
+
+  /attendance/bulk:
+    post:
+      operationId: markBulkAttendance
+      tags: [attendance]
+      summary: Mark attendance for multiple students at once
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkAttendanceBody"
+      responses:
+        "201":
+          description: Bulk attendance marked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  records:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Attendance"
+                required:
+                  - count
+                  - records
+
+  /attendance/{id}:
+    put:
+      operationId: updateAttendance
+      tags: [attendance]
+      summary: Update an attendance record
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAttendanceBody"
+      responses:
+        "200":
+          description: Updated attendance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attendance"
+
+  # ── FINANCE ───────────────────────────────────────────────────────────────
+  /fee-types:
+    get:
+      operationId: listFeeTypes
+      tags: [finance]
+      summary: List all fee types
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Fee types
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  feeTypes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FeeType"
+                required:
+                  - feeTypes
+    post:
+      operationId: createFeeType
+      tags: [finance]
+      summary: Create a fee type
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFeeTypeBody"
+      responses:
+        "201":
+          description: Fee type created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeeType"
+
+  /invoices:
+    get:
+      operationId: listInvoices
+      tags: [finance]
+      summary: List invoices
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: studentId
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/InvoiceStatus"
+        - name: month
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Invoices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceListResponse"
+    post:
+      operationId: createInvoice
+      tags: [finance]
+      summary: Create an invoice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInvoiceBody"
+      responses:
+        "201":
+          description: Invoice created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+
+  /invoices/{id}:
+    get:
+      operationId: getInvoice
+      tags: [finance]
+      summary: Get invoice by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+
+  /transactions:
+    get:
+      operationId: listTransactions
+      tags: [finance]
+      summary: List transactions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: invoiceId
+          in: query
+          schema:
+            type: integer
+        - name: studentId
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Transactions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionListResponse"
+    post:
+      operationId: createTransaction
+      tags: [finance]
+      summary: Record a payment transaction
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTransactionBody"
+      responses:
+        "201":
+          description: Transaction recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+
+  # ── DASHBOARD ─────────────────────────────────────────────────────────────
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Get admin dashboard statistics
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /dashboard/attendance-summary:
+    get:
+      operationId: getAttendanceSummary
+      tags: [dashboard]
+      summary: Attendance summary by class for today
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Attendance summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttendanceSummary"
+
+  /dashboard/revenue-trend:
+    get:
+      operationId: getRevenueTrend
+      tags: [dashboard]
+      summary: Monthly revenue trend for the last 6 months
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Revenue trend
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueTrend"
+
+  /dashboard/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [dashboard]
+      summary: Recent activity feed (admissions, payments, attendance events)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecentActivity"
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +758,769 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+
+    UserRole:
+      type: string
+      enum: [SUPER_ADMIN, TEACHER, ACCOUNTANT, PARENT, STUDENT]
+
+    StudentStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, GRADUATED, TRANSFERRED]
+
+    AttendanceStatus:
+      type: string
+      enum: [PRESENT, ABSENT, LATE, EXCUSED]
+
+    AttendanceMethod:
+      type: string
+      enum: [MANUAL, RFID]
+
+    InvoiceStatus:
+      type: string
+      enum: [PENDING, PAID, OVERDUE, CANCELLED]
+
+    PaymentMethod:
+      type: string
+      enum: [CASH, BANK_TRANSFER, MOBILE_BANKING, CHEQUE]
+
+    # ── USER ──────────────────────────────────────────────────────────────
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phoneNumber:
+          type: string
+          nullable: true
+        role:
+          $ref: "#/components/schemas/UserRole"
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - email
+        - firstName
+        - lastName
+        - role
+        - isActive
+        - createdAt
+
+    UserListResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        total:
+          type: integer
+      required:
+        - users
+        - total
+
+    LoginBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required:
+        - email
+        - password
+
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+      required:
+        - accessToken
+        - user
+
+    CreateUserBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phoneNumber:
+          type: string
+        role:
+          $ref: "#/components/schemas/UserRole"
+      required:
+        - email
+        - password
+        - firstName
+        - lastName
+        - role
+
+    UpdateUserBody:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phoneNumber:
+          type: string
+        role:
+          $ref: "#/components/schemas/UserRole"
+        isActive:
+          type: boolean
+
+    # ── CLASS ─────────────────────────────────────────────────────────────
+    Class:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        section:
+          type: string
+          nullable: true
+        gradeLevel:
+          type: integer
+        teacherId:
+          type: integer
+          nullable: true
+        teacherName:
+          type: string
+          nullable: true
+        studentCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - gradeLevel
+        - studentCount
+        - createdAt
+
+    ClassListResponse:
+      type: object
+      properties:
+        classes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Class"
+      required:
+        - classes
+
+    CreateClassBody:
+      type: object
+      properties:
+        name:
+          type: string
+        section:
+          type: string
+        gradeLevel:
+          type: integer
+        teacherId:
+          type: integer
+      required:
+        - name
+        - gradeLevel
+
+    # ── STUDENT ───────────────────────────────────────────────────────────
+    Student:
+      type: object
+      properties:
+        id:
+          type: integer
+        studentId:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+          nullable: true
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        phoneNumber:
+          type: string
+          nullable: true
+        parentName:
+          type: string
+          nullable: true
+        parentPhone:
+          type: string
+          nullable: true
+        parentEmail:
+          type: string
+          format: email
+          nullable: true
+        classId:
+          type: integer
+          nullable: true
+        className:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/StudentStatus"
+        admissionDate:
+          type: string
+          format: date
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - studentId
+        - firstName
+        - lastName
+        - status
+        - admissionDate
+        - createdAt
+
+    StudentListResponse:
+      type: object
+      properties:
+        students:
+          type: array
+          items:
+            $ref: "#/components/schemas/Student"
+        total:
+          type: integer
+      required:
+        - students
+        - total
+
+    CreateStudentBody:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+        address:
+          type: string
+        phoneNumber:
+          type: string
+        parentName:
+          type: string
+        parentPhone:
+          type: string
+        parentEmail:
+          type: string
+          format: email
+        classId:
+          type: integer
+        admissionDate:
+          type: string
+          format: date
+      required:
+        - firstName
+        - lastName
+
+    UpdateStudentBody:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+        address:
+          type: string
+        phoneNumber:
+          type: string
+        parentName:
+          type: string
+        parentPhone:
+          type: string
+        parentEmail:
+          type: string
+          format: email
+        classId:
+          type: integer
+        status:
+          $ref: "#/components/schemas/StudentStatus"
+
+    # ── ATTENDANCE ────────────────────────────────────────────────────────
+    Attendance:
+      type: object
+      properties:
+        id:
+          type: integer
+        studentId:
+          type: integer
+        studentName:
+          type: string
+        classId:
+          type: integer
+          nullable: true
+        date:
+          type: string
+          format: date
+        status:
+          $ref: "#/components/schemas/AttendanceStatus"
+        checkInTime:
+          type: string
+          nullable: true
+        method:
+          $ref: "#/components/schemas/AttendanceMethod"
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - studentId
+        - studentName
+        - date
+        - status
+        - method
+        - createdAt
+
+    AttendanceListResponse:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attendance"
+        total:
+          type: integer
+      required:
+        - records
+        - total
+
+    MarkAttendanceBody:
+      type: object
+      properties:
+        studentId:
+          type: integer
+        date:
+          type: string
+          format: date
+        status:
+          $ref: "#/components/schemas/AttendanceStatus"
+        checkInTime:
+          type: string
+        method:
+          $ref: "#/components/schemas/AttendanceMethod"
+        notes:
+          type: string
+      required:
+        - studentId
+        - date
+        - status
+
+    BulkAttendanceBody:
+      type: object
+      properties:
+        classId:
+          type: integer
+        date:
+          type: string
+          format: date
+        method:
+          $ref: "#/components/schemas/AttendanceMethod"
+        records:
+          type: array
+          items:
+            type: object
+            properties:
+              studentId:
+                type: integer
+              status:
+                $ref: "#/components/schemas/AttendanceStatus"
+              checkInTime:
+                type: string
+              notes:
+                type: string
+            required:
+              - studentId
+              - status
+      required:
+        - date
+        - records
+
+    UpdateAttendanceBody:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/AttendanceStatus"
+        checkInTime:
+          type: string
+        notes:
+          type: string
+
+    # ── FINANCE ───────────────────────────────────────────────────────────
+    FeeType:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        amount:
+          type: number
+        isRecurring:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - amount
+        - isRecurring
+        - createdAt
+
+    CreateFeeTypeBody:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        amount:
+          type: number
+        isRecurring:
+          type: boolean
+      required:
+        - name
+        - amount
+
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: integer
+        invoiceNumber:
+          type: string
+        studentId:
+          type: integer
+        studentName:
+          type: string
+        feeTypeId:
+          type: integer
+        feeTypeName:
+          type: string
+        month:
+          type: string
+          nullable: true
+        totalAmount:
+          type: number
+        paidAmount:
+          type: number
+        dueDate:
+          type: string
+          format: date
+        status:
+          $ref: "#/components/schemas/InvoiceStatus"
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - invoiceNumber
+        - studentId
+        - studentName
+        - feeTypeId
+        - feeTypeName
+        - totalAmount
+        - paidAmount
+        - dueDate
+        - status
+        - createdAt
+
+    InvoiceListResponse:
+      type: object
+      properties:
+        invoices:
+          type: array
+          items:
+            $ref: "#/components/schemas/Invoice"
+        total:
+          type: integer
+      required:
+        - invoices
+        - total
+
+    CreateInvoiceBody:
+      type: object
+      properties:
+        studentId:
+          type: integer
+        feeTypeId:
+          type: integer
+        month:
+          type: string
+        totalAmount:
+          type: number
+        dueDate:
+          type: string
+          format: date
+      required:
+        - studentId
+        - feeTypeId
+        - totalAmount
+        - dueDate
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: integer
+        invoiceId:
+          type: integer
+        studentId:
+          type: integer
+        studentName:
+          type: string
+        amountPaid:
+          type: number
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        transactionId:
+          type: string
+          nullable: true
+        paidAt:
+          type: string
+          format: date-time
+        notes:
+          type: string
+          nullable: true
+      required:
+        - id
+        - invoiceId
+        - studentId
+        - studentName
+        - amountPaid
+        - method
+        - paidAt
+
+    TransactionListResponse:
+      type: object
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+        total:
+          type: integer
+      required:
+        - transactions
+        - total
+
+    CreateTransactionBody:
+      type: object
+      properties:
+        invoiceId:
+          type: integer
+        amountPaid:
+          type: number
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        transactionId:
+          type: string
+        paidAt:
+          type: string
+          format: date-time
+        notes:
+          type: string
+      required:
+        - invoiceId
+        - amountPaid
+        - method
+
+    # ── DASHBOARD ─────────────────────────────────────────────────────────
+    DashboardStats:
+      type: object
+      properties:
+        totalStudents:
+          type: integer
+        activeStudents:
+          type: integer
+        totalTeachers:
+          type: integer
+        totalClasses:
+          type: integer
+        todayAttendanceRate:
+          type: number
+        monthlyRevenue:
+          type: number
+        pendingInvoices:
+          type: integer
+        overdueInvoices:
+          type: integer
+        newAdmissionsThisMonth:
+          type: integer
+        totalRevenue:
+          type: number
+      required:
+        - totalStudents
+        - activeStudents
+        - totalTeachers
+        - totalClasses
+        - todayAttendanceRate
+        - monthlyRevenue
+        - pendingInvoices
+        - overdueInvoices
+        - newAdmissionsThisMonth
+        - totalRevenue
+
+    AttendanceSummary:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        summary:
+          type: array
+          items:
+            type: object
+            properties:
+              classId:
+                type: integer
+              className:
+                type: string
+              total:
+                type: integer
+              present:
+                type: integer
+              absent:
+                type: integer
+              late:
+                type: integer
+              rate:
+                type: number
+            required:
+              - classId
+              - className
+              - total
+              - present
+              - absent
+              - late
+              - rate
+        overall:
+          type: object
+          properties:
+            total:
+              type: integer
+            present:
+              type: integer
+            rate:
+              type: number
+          required:
+            - total
+            - present
+            - rate
+      required:
+        - date
+        - summary
+        - overall
+
+    RevenueTrend:
+      type: object
+      properties:
+        months:
+          type: array
+          items:
+            type: object
+            properties:
+              month:
+                type: string
+              collected:
+                type: number
+              pending:
+                type: number
+            required:
+              - month
+              - collected
+              - pending
+      required:
+        - months
+
+    ActivityItem:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [ADMISSION, PAYMENT, ATTENDANCE, USER_CREATED]
+        description:
+          type: string
+        entityName:
+          type: string
+        amount:
+          type: number
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+      required:
+        - id
+        - type
+        - description
+        - entityName
+        - timestamp
+
+    RecentActivity:
+      type: object
+      properties:
+        activities:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityItem"
+      required:
+        - activities

@@ -1,8 +1,46 @@
 import { Router, type IRouter } from "express";
-import healthRouter from "./health";
+import healthRouter from "./health/index.js";
+import authRouter from "./auth/index.js";
+import usersRouter from "./users/index.js";
+import classesRouter from "./classes/index.js";
+import studentsRouter from "./students/index.js";
+import bulkImportRouter from "./students/bulk-import.js";
+import attendanceRouter from "./attendance/index.js";
+import financeRouter from "./finance/index.js";
+import dashboardRouter from "./dashboard/index.js";
+import auditRouter from "./audit/index.js";
+import subjectsRouter from "./subjects/index.js";
+import examResultsRouter from "./exam-results/index.js";
+import timetableRouter from "./timetable/index.js";
+import notificationsRouter from "./notifications/index.js";
+import calendarRouter from "./calendar/index.js";
+import documentsRouter from "./documents/index.js";
+import passwordResetRouter from "./password-reset/index.js";
+import parentStudentsRouter from "./parent-students/index.js";
+import tenantsRouter from "./tenants/index.js";
+import hardwareRouter from "./hardware/index.js";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(authRouter);
+router.use(tenantsRouter);
+router.use(usersRouter);
+router.use(classesRouter);
+router.use(studentsRouter);
+router.use(bulkImportRouter);
+router.use(attendanceRouter);
+router.use(financeRouter);
+router.use(dashboardRouter);
+router.use(auditRouter);
+router.use(subjectsRouter);
+router.use(examResultsRouter);
+router.use(timetableRouter);
+router.use(notificationsRouter);
+router.use(calendarRouter);
+router.use(documentsRouter);
+router.use(passwordResetRouter);
+router.use(parentStudentsRouter);
+router.use(hardwareRouter);
 
 export default router;
