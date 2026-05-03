@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { feeTypesTable, invoicesTable, transactionsTable, studentsTable } from "@workspace/db";
-import { eq, and, count } from "drizzle-orm";
+import { feeTypesTable, invoicesTable, transactionsTable, studentsTable, classesTable } from "@workspace/db";
+import { eq, and, count, inArray } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import { audit } from "../../lib/audit.js";
@@ -178,6 +178,86 @@ router.post("/transactions", requireAuth, requireFinance, async (req: AuthReques
     studentName: student ? `${student.firstName} ${student.lastName}` : "Unknown",
     amountPaid: parseFloat(txn.amountPaid), method: txn.method,
     transactionId: txn.transactionId, paidAt: txn.paidAt.toISOString(), notes: txn.notes,
+  });
+});
+
+// ── Bulk Invoice Generation ────────────────────────────────────────────────
+
+router.post("/invoices/bulk-generate", requireAuth, requireFinance, async (req: AuthRequest, res): Promise<void> => {
+  const { classId, feeTypeId, month, dueDate, amount } = req.body as {
+    classId?: number; feeTypeId?: number; month?: string; dueDate?: string; amount?: number;
+  };
+
+  if (!classId || !feeTypeId || !dueDate) {
+    res.status(400).json({ error: "classId, feeTypeId, and dueDate are required" }); return;
+  }
+
+  // Verify class exists
+  const [cls] = await db.select({ id: classesTable.id, name: classesTable.name })
+    .from(classesTable).where(eq(classesTable.id, classId)).limit(1);
+  if (!cls) { res.status(404).json({ error: "CLASS_NOT_FOUND" }); return; }
+
+  // Verify fee type exists
+  const [feeType] = await db.select().from(feeTypesTable).where(eq(feeTypesTable.id, feeTypeId)).limit(1);
+  if (!feeType) { res.status(404).json({ error: "FEE_TYPE_NOT_FOUND" }); return; }
+
+  const unitAmount = amount ?? parseFloat(feeType.amount);
+
+  // All ACTIVE students in the class
+  const students = await db.select({ id: studentsTable.id, firstName: studentsTable.firstName, lastName: studentsTable.lastName })
+    .from(studentsTable)
+    .where(and(eq(studentsTable.classId, classId), eq(studentsTable.status, "ACTIVE")));
+
+  if (students.length === 0) {
+    res.json({ created: 0, skipped: 0, total: 0, invoices: [], message: "No active students found in this class" }); return;
+  }
+
+  // Check which students already have an invoice for this feeType+month combo
+  const studentIds = students.map(s => s.id);
+  const existingConditions = [
+    inArray(invoicesTable.studentId, studentIds),
+    eq(invoicesTable.feeTypeId, feeTypeId),
+  ];
+  if (month) existingConditions.push(eq(invoicesTable.month, month));
+
+  const existing = await db.select({ studentId: invoicesTable.studentId })
+    .from(invoicesTable)
+    .where(and(...existingConditions));
+
+  const existingStudentIds = new Set(existing.map(e => e.studentId));
+  const toCreate = students.filter(s => !existingStudentIds.has(s.id));
+  const skipped = students.length - toCreate.length;
+
+  if (toCreate.length === 0) {
+    res.json({ created: 0, skipped, total: students.length, invoices: [], message: "All students already have an invoice for this period" }); return;
+  }
+
+  // Batch insert
+  const inserted = await db.insert(invoicesTable).values(
+    toCreate.map(s => ({
+      invoiceNumber: genInvoiceNumber(),
+      studentId: s.id,
+      feeTypeId,
+      month: month ?? null,
+      totalAmount: String(unitAmount),
+      dueDate,
+    }))
+  ).returning();
+
+  await audit({
+    userId: req.userId, userEmail: req.userEmail, userRole: req.userRole,
+    action: "BULK_CREATE", entity: "invoice", entityId: classId,
+    description: `Bulk generated ${inserted.length} invoices for class "${cls.name}" — fee: ${feeType.name}${month ? `, month: ${month}` : ""}`,
+    metadata: { classId, className: cls.name, feeTypeId, feeTypeName: feeType.name, month, dueDate, created: inserted.length, skipped },
+  });
+
+  const formatted = await Promise.all(inserted.map(formatInvoice));
+  res.status(201).json({
+    created: inserted.length,
+    skipped,
+    total: students.length,
+    invoices: formatted,
+    message: `Created ${inserted.length} invoice${inserted.length !== 1 ? "s" : ""}${skipped > 0 ? `, skipped ${skipped} (already exists)` : ""}`,
   });
 });
 

@@ -23,6 +23,7 @@ import {
   Plus, Loader2, CreditCard, ChevronLeft, ChevronRight,
   Bell, CheckCircle2, Download, Clock, Play, RefreshCw,
   Inbox, ThumbsUp, ThumbsDown, AlertCircle, XCircle,
+  Layers, SkipForward, ListChecks,
 } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
 
@@ -78,6 +79,247 @@ function authedFetch<T>(url: string, options?: RequestInit): Promise<T> {
     if (!r.ok) throw new Error((data as any)?.error ?? "Request failed");
     return data as T;
   });
+}
+
+// ── Bulk Generate Dialog ───────────────────────────────────────────────────
+
+type ClassItem = { id: number; name: string; gradeLevel: number; studentCount?: number };
+type FeeTypeItem = { id: number; name: string; amount: number; isRecurring: boolean };
+type BulkResult = { created: number; skipped: number; total: number; message: string };
+
+function BulkGenerateDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [classId, setClassId] = useState<string>("");
+  const [feeTypeId, setFeeTypeId] = useState<string>("");
+  const [month, setMonth] = useState<string>("");
+  const [dueDate, setDueDate] = useState<string>("");
+  const [amountOverride, setAmountOverride] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<BulkResult | null>(null);
+
+  const { data: classesData } = useQuery<{ classes: ClassItem[] }>({
+    queryKey: ["classes-list"],
+    queryFn: () => authedFetch("/api/classes"),
+    enabled: open,
+  });
+  const { data: feeTypesData } = useQuery<{ feeTypes: FeeTypeItem[] }>({
+    queryKey: ["fee-types-list"],
+    queryFn: () => authedFetch("/api/fee-types"),
+    enabled: open,
+  });
+
+  const { data: studentsData } = useQuery<{ students: unknown[]; total: number }>({
+    queryKey: ["students-by-class", classId],
+    queryFn: () => authedFetch(`/api/students?classId=${classId}&status=ACTIVE&limit=200`),
+    enabled: !!classId,
+  });
+
+  const selectedFeeType = feeTypesData?.feeTypes.find(f => f.id === Number(feeTypeId));
+  const eligibleCount = studentsData?.total ?? null;
+
+  const reset = () => {
+    setClassId(""); setFeeTypeId(""); setMonth(""); setDueDate("");
+    setAmountOverride(""); setResult(null);
+  };
+
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleGenerate = async () => {
+    if (!classId || !feeTypeId || !dueDate) {
+      toast({ title: "Class, fee type, and due date are required", variant: "destructive" }); return;
+    }
+    setLoading(true);
+    try {
+      const body: Record<string, unknown> = {
+        classId: Number(classId), feeTypeId: Number(feeTypeId), dueDate,
+      };
+      if (month) body["month"] = month;
+      if (amountOverride && parseFloat(amountOverride) > 0) body["amount"] = parseFloat(amountOverride);
+
+      const r = await authedFetch<BulkResult>("/api/invoices/bulk-generate", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      });
+      setResult(r);
+      if (r.created > 0) {
+        qc.invalidateQueries({ queryKey: getListInvoicesQueryKey({}) });
+        toast({ title: `${r.created} invoice${r.created !== 1 ? "s" : ""} generated`, description: r.message });
+      } else {
+        toast({ title: "Nothing to generate", description: r.message });
+      }
+    } catch (e: any) {
+      toast({ title: "Generation failed", description: e.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Layers className="h-4 w-4" /> Bulk Invoice Generation
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Auto-create invoices for all active students in a class. Already-invoiced students are skipped automatically.
+          </p>
+        </DialogHeader>
+
+        {result ? (
+          /* ── Results screen ── */
+          <div className="space-y-4 py-2">
+            <div className={cn(
+              "rounded-xl border p-5 text-center",
+              result.created > 0 ? "border-green-200 bg-green-50" : "border-muted bg-muted/30",
+            )}>
+              {result.created > 0
+                ? <CheckCircle2 className="h-10 w-10 text-green-500 mx-auto mb-3" />
+                : <SkipForward className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-50" />}
+              <p className="text-2xl font-bold tabular-nums">{result.created}</p>
+              <p className="text-sm text-muted-foreground">invoice{result.created !== 1 ? "s" : ""} created</p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 text-center">
+              {[
+                { label: "Total Students", value: result.total, cls: "text-foreground" },
+                { label: "Created",        value: result.created, cls: "text-green-600" },
+                { label: "Skipped",        value: result.skipped, cls: "text-amber-600" },
+              ].map(s => (
+                <div key={s.label} className="rounded-lg border border-border bg-card p-3">
+                  <p className={cn("text-xl font-bold tabular-nums", s.cls)}>{s.value}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-0.5">{s.label}</p>
+                </div>
+              ))}
+            </div>
+
+            {result.skipped > 0 && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                <SkipForward className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                {result.skipped} student{result.skipped !== 1 ? "s were" : " was"} skipped because they already have an invoice for this fee type and period.
+              </div>
+            )}
+
+            <p className="text-xs text-center text-muted-foreground">{result.message}</p>
+          </div>
+        ) : (
+          /* ── Form screen ── */
+          <div className="space-y-4 py-1">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Class *</Label>
+                <Select value={classId} onValueChange={setClassId}>
+                  <SelectTrigger><SelectValue placeholder="Select class…" /></SelectTrigger>
+                  <SelectContent>
+                    {(classesData?.classes ?? [])
+                      .sort((a, b) => a.gradeLevel - b.gradeLevel)
+                      .map(c => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.name} <span className="text-muted-foreground">(Grade {c.gradeLevel})</span>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Fee Type *</Label>
+                <Select value={feeTypeId} onValueChange={v => { setFeeTypeId(v); setAmountOverride(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Select fee type…" /></SelectTrigger>
+                  <SelectContent>
+                    {(feeTypesData?.feeTypes ?? []).map(f => (
+                      <SelectItem key={f.id} value={String(f.id)}>
+                        {f.name} <span className="text-muted-foreground">৳{f.amount.toLocaleString()}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Month <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Input
+                  type="month"
+                  value={month}
+                  onChange={e => setMonth(e.target.value)}
+                  placeholder="YYYY-MM"
+                />
+                <p className="text-[10px] text-muted-foreground">Leave blank for one-time fees</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Due Date *</Label>
+                <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>
+                Amount Override <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">৳</span>
+                <Input
+                  type="number" step="0.01" min="0"
+                  className="pl-7"
+                  value={amountOverride}
+                  onChange={e => setAmountOverride(e.target.value)}
+                  placeholder={selectedFeeType ? String(selectedFeeType.amount) : "Default from fee type"}
+                />
+              </div>
+              {selectedFeeType && (
+                <p className="text-[10px] text-muted-foreground">
+                  Default: ৳{selectedFeeType.amount.toLocaleString()} from "{selectedFeeType.name}"
+                </p>
+              )}
+            </div>
+
+            {/* Eligibility preview */}
+            {classId && (
+              <div className={cn(
+                "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm",
+                eligibleCount === null
+                  ? "border-border bg-muted/30 text-muted-foreground"
+                  : eligibleCount > 0
+                    ? "border-blue-200 bg-blue-50 text-blue-800"
+                    : "border-red-200 bg-red-50 text-red-700",
+              )}>
+                <ListChecks className="h-4 w-4 shrink-0" />
+                {eligibleCount === null
+                  ? "Counting students…"
+                  : eligibleCount === 0
+                    ? "No active students found in this class"
+                    : <><span className="font-semibold">{eligibleCount}</span> active student{eligibleCount !== 1 ? "s" : ""} will receive invoices (duplicates skipped automatically)</>}
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          {result ? (
+            <>
+              <Button variant="outline" onClick={reset}>Generate More</Button>
+              <Button onClick={handleClose}>Done</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={handleClose} disabled={loading}>Cancel</Button>
+              <Button
+                onClick={handleGenerate}
+                disabled={loading || !classId || !feeTypeId || !dueDate || eligibleCount === 0}
+              >
+                {loading
+                  ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating…</>
+                  : <><Layers className="mr-2 h-4 w-4" /> Generate Invoices</>}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // ── Export PDF Dialog ──────────────────────────────────────────────────────
@@ -757,6 +999,7 @@ function PaymentRequestsTab() {
 export default function FinancePage() {
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [page, setPage] = useState(0);
@@ -799,6 +1042,9 @@ export default function FinancePage() {
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setExportDialogOpen(true)}>
             <Download className="mr-2 h-4 w-4" /> Export PDF
+          </Button>
+          <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
+            <Layers className="mr-2 h-4 w-4" /> Bulk Generate
           </Button>
           <Button onClick={() => setInvoiceDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> Create Invoice
@@ -978,6 +1224,7 @@ export default function FinancePage() {
       <CreateInvoiceDialog open={invoiceDialogOpen} onClose={() => setInvoiceDialogOpen(false)} />
       <RecordPaymentDialog invoice={paymentInvoice} open={!!paymentInvoice} onClose={() => setPaymentInvoice(null)} />
       <ExportPdfDialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} />
+      <BulkGenerateDialog open={bulkDialogOpen} onClose={() => setBulkDialogOpen(false)} />
     </div>
   );
 }
