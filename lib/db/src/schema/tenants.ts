@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, timestamp, pgEnum, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -16,6 +16,13 @@ export const tenantsTable = pgTable("tenants", {
   address: text("address"),
   plan: tenantPlanEnum("plan").notNull().default("FREE"),
   isActive: boolean("is_active").notNull().default(true),
+  // SMTP settings (stored per-tenant; password stored as plaintext — encrypt in production)
+  smtpHost: text("smtp_host"),
+  smtpPort: integer("smtp_port").default(587),
+  smtpUser: text("smtp_user"),
+  smtpPass: text("smtp_pass"),
+  smtpFrom: text("smtp_from"),
+  smtpSecure: boolean("smtp_secure").default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

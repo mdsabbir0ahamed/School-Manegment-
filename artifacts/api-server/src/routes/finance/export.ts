@@ -8,7 +8,7 @@ import { eq, and, gte, lte } from "drizzle-orm";
 import { requireAuth } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import PDFDocument from "pdfkit";
-import { sendMail } from "../../lib/mailer.js";
+import { sendMail, sendMailWithConfig, type SmtpConfig } from "../../lib/mailer.js";
 
 const router = Router();
 
@@ -572,12 +572,12 @@ router.post(
       doc.end();
     });
 
-    // Send email
+    // Send email — prefer DB SMTP config, fall back to env vars
     const parentName = linkedParent
       ? `${linkedParent.firstName} ${linkedParent.lastName}`
       : (student?.parentName ?? "Parent/Guardian");
 
-    const result = await sendMail({
+    const mailPayload = {
       to: recipientEmail,
       subject: `Payment Receipt TXN-${id} — ${schoolName}`,
       html: `
@@ -603,7 +603,23 @@ router.post(
       attachments: [
         { filename: `receipt-TXN-${id}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
       ],
-    });
+    };
+
+    // Try DB-stored SMTP config first
+    const dbSmtp = tenant?.smtpHost && tenant.smtpUser && tenant.smtpPass
+      ? {
+          host: tenant.smtpHost,
+          port: tenant.smtpPort ?? 587,
+          user: tenant.smtpUser,
+          pass: tenant.smtpPass,
+          from: tenant.smtpFrom ?? `"${schoolName}" <no-reply@school.edu>`,
+          secure: tenant.smtpSecure ?? false,
+        } satisfies SmtpConfig
+      : null;
+
+    const result = dbSmtp
+      ? await sendMailWithConfig(dbSmtp, mailPayload)
+      : await sendMail(mailPayload);
 
     // Create in-app notification for the linked parent user (if they have an account)
     if (linkedParent?.userId) {
@@ -622,7 +638,7 @@ router.post(
       deliveryMode: result.deliveryMode,
       message: result.deliveryMode === "email"
         ? `Receipt emailed to ${recipientEmail}`
-        : `SMTP not configured — receipt logged. Configure SMTP_HOST / SMTP_USER / SMTP_PASS to enable email delivery.`,
+        : `SMTP not configured — receipt logged. Set up email delivery in Settings → Tenants → Email Settings.`,
     });
   },
 );

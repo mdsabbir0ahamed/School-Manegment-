@@ -6,6 +6,7 @@ import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js"
 import { requireSuperAdmin } from "../../middlewares/requireRole.js";
 import { invalidateTenantCache } from "../../middlewares/requireTenant.js";
 import { audit } from "../../lib/audit.js";
+import { buildTransporter, type SmtpConfig } from "../../lib/mailer.js";
 
 const router = Router();
 
@@ -100,6 +101,98 @@ router.delete("/tenants/:id", requireAuth, requireSuperAdmin, async (req: AuthRe
     description: `Deleted tenant "${tenant?.name}"`,
   });
   res.status(204).send();
+});
+
+// ── SMTP Settings ─────────────────────────────────────────────────────────
+
+router.get("/tenants/smtp-settings", requireAuth, requireSuperAdmin, async (_req, res): Promise<void> => {
+  const [tenant] = await db.select({
+    smtpHost: tenantsTable.smtpHost,
+    smtpPort: tenantsTable.smtpPort,
+    smtpUser: tenantsTable.smtpUser,
+    smtpPass: tenantsTable.smtpPass,
+    smtpFrom: tenantsTable.smtpFrom,
+    smtpSecure: tenantsTable.smtpSecure,
+  }).from(tenantsTable).where(eq(tenantsTable.id, 1)).limit(1);
+
+  if (!tenant) { res.status(404).json({ error: "NOT_FOUND" }); return; }
+
+  // Mask password: return "••••••••" if set, empty string if not
+  res.json({
+    smtpHost: tenant.smtpHost ?? "",
+    smtpPort: tenant.smtpPort ?? 587,
+    smtpUser: tenant.smtpUser ?? "",
+    smtpPassSet: !!tenant.smtpPass,
+    smtpFrom: tenant.smtpFrom ?? "",
+    smtpSecure: tenant.smtpSecure ?? false,
+  });
+});
+
+router.put("/tenants/smtp-settings", requireAuth, requireSuperAdmin, async (req: AuthRequest, res): Promise<void> => {
+  const { smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom, smtpSecure } =
+    req.body as {
+      smtpHost?: string; smtpPort?: number; smtpUser?: string;
+      smtpPass?: string; smtpFrom?: string; smtpSecure?: boolean;
+    };
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (smtpHost !== undefined) updates["smtpHost"] = smtpHost || null;
+  if (smtpPort !== undefined) updates["smtpPort"] = smtpPort;
+  if (smtpUser !== undefined) updates["smtpUser"] = smtpUser || null;
+  // Only overwrite password if a non-empty value is provided
+  if (smtpPass !== undefined && smtpPass !== "") updates["smtpPass"] = smtpPass;
+  if (smtpFrom !== undefined) updates["smtpFrom"] = smtpFrom || null;
+  if (smtpSecure !== undefined) updates["smtpSecure"] = smtpSecure;
+
+  await db.update(tenantsTable).set(updates as any).where(eq(tenantsTable.id, 1));
+
+  await audit({
+    userId: req.userId, userEmail: req.userEmail, userRole: req.userRole,
+    action: "UPDATE", entity: "tenant", entityId: 1,
+    description: "Updated SMTP email settings",
+  });
+
+  res.json({ success: true });
+});
+
+router.post("/tenants/smtp-settings/test", requireAuth, requireSuperAdmin, async (req: AuthRequest, res): Promise<void> => {
+  const { to } = req.body as { to?: string };
+  if (!to?.trim()) { res.status(400).json({ error: "Recipient email required" }); return; }
+
+  const [tenant] = await db.select({
+    smtpHost: tenantsTable.smtpHost, smtpPort: tenantsTable.smtpPort,
+    smtpUser: tenantsTable.smtpUser, smtpPass: tenantsTable.smtpPass,
+    smtpFrom: tenantsTable.smtpFrom, smtpSecure: tenantsTable.smtpSecure,
+    name: tenantsTable.name,
+  }).from(tenantsTable).where(eq(tenantsTable.id, 1)).limit(1);
+
+  if (!tenant?.smtpHost || !tenant.smtpUser || !tenant.smtpPass) {
+    res.status(422).json({ error: "SMTP not configured — set Host, User and Password first" });
+    return;
+  }
+
+  const cfg: SmtpConfig = {
+    host: tenant.smtpHost,
+    port: tenant.smtpPort ?? 587,
+    user: tenant.smtpUser,
+    pass: tenant.smtpPass,
+    from: tenant.smtpFrom ?? `"${tenant.name}" <no-reply@school.edu>`,
+    secure: tenant.smtpSecure ?? false,
+  };
+
+  try {
+    const transporter = buildTransporter(cfg);
+    await transporter.sendMail({
+      from: cfg.from,
+      to: to.trim(),
+      subject: `Test Email — ${tenant.name}`,
+      html: `<p>This is a test email from <strong>${tenant.name}</strong> School ERP. Your SMTP configuration is working correctly.</p>`,
+    });
+    res.json({ success: true, message: `Test email sent to ${to.trim()}` });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown SMTP error";
+    res.status(502).json({ error: "SMTP_ERROR", message });
+  }
 });
 
 export default router;

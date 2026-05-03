@@ -16,7 +16,11 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Building2, Globe } from "lucide-react";
+import {
+  Plus, Pencil, Trash2, Building2, Globe,
+  Mail, ChevronDown, ChevronUp, CheckCircle2, AlertCircle,
+  Send, Eye, EyeOff, Loader2,
+} from "lucide-react";
 import { format } from "date-fns";
 
 const PLANS = ["FREE", "BASIC", "PRO", "ENTERPRISE"];
@@ -42,9 +46,22 @@ interface Tenant {
   createdAt: string;
 }
 
+interface SmtpSettings {
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPassSet: boolean;
+  smtpFrom: string;
+  smtpSecure: boolean;
+}
+
 const emptyForm = {
   name: "", subdomain: "", primaryColor: "#4F46E5", primaryColorDark: "#3730A3",
   logoUrl: "", contactEmail: "", contactPhone: "", address: "", plan: "FREE", isActive: true,
+};
+
+const emptySmtp = {
+  smtpHost: "", smtpPort: 587, smtpUser: "", smtpPass: "", smtpFrom: "", smtpSecure: false,
 };
 
 export default function TenantsPage() {
@@ -53,12 +70,43 @@ export default function TenantsPage() {
   const [dialog, setDialog] = useState<{ open: boolean; tenant: Tenant | null }>({ open: false, tenant: null });
   const [form, setForm] = useState(emptyForm);
 
+  // SMTP panel state
+  const [smtpOpen, setSmtpOpen] = useState(false);
+  const [smtp, setSmtp] = useState(emptySmtp);
+  const [showPass, setShowPass] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [testing, setTesting] = useState(false);
+
   const { data, isLoading } = useQuery<{ tenants: Tenant[] }>({
     queryKey: ["tenants"],
     queryFn: () => customFetch("/api/tenants"),
   });
 
-  const saveMutation = useMutation({
+  const { data: smtpData, isLoading: smtpLoading, refetch: refetchSmtp } = useQuery<SmtpSettings>({
+    queryKey: ["smtp-settings"],
+    queryFn: () => customFetch("/api/tenants/smtp-settings"),
+    enabled: smtpOpen,
+  });
+
+  // Sync smtp form when data loads
+  const handleOpenSmtp = () => {
+    setSmtpOpen(true);
+    if (smtpData) {
+      setSmtp({
+        smtpHost: smtpData.smtpHost,
+        smtpPort: smtpData.smtpPort,
+        smtpUser: smtpData.smtpUser,
+        smtpPass: "",
+        smtpFrom: smtpData.smtpFrom,
+        smtpSecure: smtpData.smtpSecure,
+      });
+    }
+  };
+
+  // When smtpData arrives, populate form
+  const smtpConfigured = !!(smtpData?.smtpHost && smtpData.smtpUser && smtpData.smtpPassSet);
+
+  const saveTenant = useMutation({
     mutationFn: (payload: typeof emptyForm & { id?: number }) => {
       if (payload.id) {
         return customFetch(`/api/tenants/${payload.id}`, { method: "PUT", body: JSON.stringify(payload) });
@@ -73,7 +121,7 @@ export default function TenantsPage() {
     onError: () => toast({ title: "Error saving tenant", variant: "destructive" }),
   });
 
-  const deleteMutation = useMutation({
+  const deleteTenant = useMutation({
     mutationFn: (id: number) => customFetch(`/api/tenants/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenants"] });
@@ -82,11 +130,35 @@ export default function TenantsPage() {
     onError: () => toast({ title: "Cannot delete this tenant", variant: "destructive" }),
   });
 
-  const openAdd = () => {
-    setForm(emptyForm);
-    setDialog({ open: true, tenant: null });
+  const saveSmtp = useMutation({
+    mutationFn: (payload: typeof emptySmtp) =>
+      customFetch("/api/tenants/smtp-settings", { method: "PUT", body: JSON.stringify(payload) }),
+    onSuccess: () => {
+      refetchSmtp();
+      qc.invalidateQueries({ queryKey: ["smtp-settings"] });
+      toast({ title: "Email settings saved" });
+    },
+    onError: () => toast({ title: "Failed to save email settings", variant: "destructive" }),
+  });
+
+  const sendTestEmail = async () => {
+    if (!testEmail.trim()) { toast({ title: "Enter a recipient email", variant: "destructive" }); return; }
+    setTesting(true);
+    try {
+      const res = await customFetch("/api/tenants/smtp-settings/test", {
+        method: "POST",
+        body: JSON.stringify({ to: testEmail.trim() }),
+      }) as { success?: boolean; message?: string; error?: string };
+      toast({ title: "Test email sent!", description: res.message ?? `Delivered to ${testEmail}` });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "SMTP error";
+      toast({ title: "Test failed", description: msg, variant: "destructive" });
+    } finally {
+      setTesting(false);
+    }
   };
 
+  const openAdd = () => { setForm(emptyForm); setDialog({ open: true, tenant: null }); };
   const openEdit = (t: Tenant) => {
     setForm({
       name: t.name, subdomain: t.subdomain, primaryColor: t.primaryColor,
@@ -187,7 +259,7 @@ export default function TenantsPage() {
                     </Button>
                     {t.id !== 1 && (
                       <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => { if (confirm(`Delete tenant "${t.name}"?`)) deleteMutation.mutate(t.id); }}>
+                        onClick={() => { if (confirm(`Delete tenant "${t.name}"?`)) deleteTenant.mutate(t.id); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     )}
@@ -199,6 +271,182 @@ export default function TenantsPage() {
         </Table>
       </div>
 
+      {/* ── SMTP / Email Settings panel ───────────────────────────────────── */}
+      <div className="rounded-lg border bg-card overflow-hidden">
+        <button
+          onClick={() => (smtpOpen ? setSmtpOpen(false) : handleOpenSmtp())}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+              <Mail className="h-4 w-4 text-indigo-500" />
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-semibold">Email Settings (SMTP)</p>
+              <p className="text-xs text-muted-foreground">Configure outgoing email for payment receipts and notifications</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            {!smtpLoading && smtpOpen && (
+              smtpConfigured
+                ? <Badge className="bg-emerald-500/15 text-emerald-500 gap-1 text-xs"><CheckCircle2 className="h-3 w-3" />Configured</Badge>
+                : <Badge className="bg-amber-500/15 text-amber-500 gap-1 text-xs"><AlertCircle className="h-3 w-3" />Not configured</Badge>
+            )}
+            {smtpOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </div>
+        </button>
+
+        {smtpOpen && (
+          <div className="border-t border-border px-5 py-5 space-y-6">
+            {smtpLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading settings...
+              </div>
+            ) : (
+              <>
+                {/* Status banner */}
+                {smtpConfigured ? (
+                  <div className="flex items-start gap-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
+                    <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                      SMTP is configured. Payment receipts and system notifications will be delivered via email.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3">
+                    <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                    <p className="text-sm text-amber-700 dark:text-amber-400">
+                      SMTP is not configured. Email delivery is disabled — emails will be logged server-side only. Fill in the fields below and save to enable.
+                    </p>
+                  </div>
+                )}
+
+                {/* Fields */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">SMTP Host</Label>
+                    <Input
+                      placeholder="smtp.gmail.com"
+                      value={smtp.smtpHost}
+                      onChange={e => setSmtp(p => ({ ...p, smtpHost: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">Port</Label>
+                    <Input
+                      type="number"
+                      placeholder="587"
+                      value={smtp.smtpPort}
+                      onChange={e => setSmtp(p => ({ ...p, smtpPort: parseInt(e.target.value) || 587 }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">Username / Email</Label>
+                    <Input
+                      placeholder="you@gmail.com"
+                      value={smtp.smtpUser}
+                      onChange={e => setSmtp(p => ({ ...p, smtpUser: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      Password {smtpData?.smtpPassSet && <span className="text-muted-foreground font-normal">(leave blank to keep existing)</span>}
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        type={showPass ? "text" : "password"}
+                        placeholder={smtpData?.smtpPassSet ? "••••••••  (already set)" : "App password or SMTP password"}
+                        value={smtp.smtpPass}
+                        onChange={e => setSmtp(p => ({ ...p, smtpPass: e.target.value }))}
+                        className="pr-9"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPass(p => !p)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showPass ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="sm:col-span-2 space-y-1.5">
+                    <Label className="text-xs font-medium">From Address</Label>
+                    <Input
+                      placeholder='"Smart School ERP" <no-reply@yourschool.edu>'
+                      value={smtp.smtpFrom}
+                      onChange={e => setSmtp(p => ({ ...p, smtpFrom: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">Appears as the sender name in recipients' inboxes.</p>
+                  </div>
+                  <div className="sm:col-span-2 flex items-center gap-3">
+                    <Switch
+                      checked={smtp.smtpSecure}
+                      onCheckedChange={v => setSmtp(p => ({ ...p, smtpSecure: v }))}
+                    />
+                    <div>
+                      <p className="text-sm font-medium">Use TLS / SSL</p>
+                      <p className="text-xs text-muted-foreground">Enable for port 465. Leave off for port 587 (STARTTLS).</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Provider hints */}
+                <div className="rounded-lg bg-muted/40 p-3 space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Quick Reference</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                    {[
+                      { name: "Gmail", host: "smtp.gmail.com", port: "587", note: "Use App Password" },
+                      { name: "Outlook / 365", host: "smtp.office365.com", port: "587", note: "Modern Auth" },
+                      { name: "SendGrid", host: "smtp.sendgrid.net", port: "587", note: "API Key as password" },
+                    ].map(p => (
+                      <button
+                        key={p.name}
+                        onClick={() => setSmtp(prev => ({ ...prev, smtpHost: p.host, smtpPort: parseInt(p.port), smtpSecure: false }))}
+                        className="text-left rounded-md border border-border p-2 hover:bg-muted/60 transition-colors"
+                      >
+                        <p className="text-xs font-semibold">{p.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{p.host}:{p.port}</p>
+                        <p className="text-xs text-muted-foreground">{p.note}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Save */}
+                <div className="flex justify-end">
+                  <Button onClick={() => saveSmtp.mutate(smtp)} disabled={saveSmtp.isPending} className="gap-2">
+                    {saveSmtp.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                    Save Email Settings
+                  </Button>
+                </div>
+
+                {/* Test section */}
+                <div className="border-t border-border pt-5 space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold">Send Test Email</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Verify your SMTP settings by sending a test message. Save first if you made changes.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="email"
+                      placeholder="recipient@example.com"
+                      value={testEmail}
+                      onChange={e => setTestEmail(e.target.value)}
+                      className="max-w-sm"
+                    />
+                    <Button variant="outline" onClick={sendTestEmail} disabled={testing} className="gap-2 whitespace-nowrap">
+                      {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Send Test
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Tenant create/edit dialog ─────────────────────────────────────── */}
       <Dialog open={dialog.open} onOpenChange={open => setDialog(p => ({ ...p, open }))}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -261,9 +509,9 @@ export default function TenantsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog({ open: false, tenant: null })}>Cancel</Button>
-            <Button onClick={() => saveMutation.mutate({ ...form, id: dialog.tenant?.id })}
-              disabled={saveMutation.isPending || !form.name || !form.subdomain}>
-              {saveMutation.isPending ? "Saving..." : dialog.tenant ? "Save Changes" : "Create Tenant"}
+            <Button onClick={() => saveTenant.mutate({ ...form, id: dialog.tenant?.id })}
+              disabled={saveTenant.isPending || !form.name || !form.subdomain}>
+              {saveTenant.isPending ? "Saving..." : dialog.tenant ? "Save Changes" : "Create Tenant"}
             </Button>
           </DialogFooter>
         </DialogContent>
