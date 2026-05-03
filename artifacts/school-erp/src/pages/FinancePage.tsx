@@ -23,7 +23,7 @@ import {
   Plus, Loader2, CreditCard, ChevronLeft, ChevronRight,
   Bell, CheckCircle2, Download, Clock, Play, RefreshCw,
   Inbox, ThumbsUp, ThumbsDown, AlertCircle, XCircle,
-  Layers, SkipForward, ListChecks,
+  Layers, SkipForward, ListChecks, Tag, Percent, ToggleLeft, ToggleRight, Trash2, UserCheck,
 } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
 
@@ -784,6 +784,352 @@ function RemindersTab() {
   );
 }
 
+// ── Discounts Tab ──────────────────────────────────────────────────────────
+
+type Discount = {
+  id: number; studentId: number; studentName: string; studentKey: string;
+  feeTypeId: number | null; feeTypeName: string | null;
+  discountType: "PERCENTAGE" | "FIXED";
+  discountValue: number; reason: string | null; isActive: boolean;
+  createdBy: string | null; createdAt: string;
+};
+
+function AddDiscountDialog({ open, onClose, onCreated }: {
+  open: boolean; onClose: () => void; onCreated: () => void;
+}) {
+  const { toast } = useToast();
+  const [studentId, setStudentId] = useState<string>("");
+  const [feeTypeId, setFeeTypeId] = useState<string>("all");
+  const [discountType, setDiscountType] = useState<"PERCENTAGE" | "FIXED">("PERCENTAGE");
+  const [discountValue, setDiscountValue] = useState<string>("");
+  const [reason, setReason] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+
+  const { data: studentsData } = useListStudents({ limit: 200 });
+  const { data: feeTypesData } = useQuery<{ feeTypes: { id: number; name: string; amount: number }[] }>({
+    queryKey: ["fee-types-list"],
+    queryFn: () => authedFetch("/api/fee-types"),
+    enabled: open,
+  });
+
+  const reset = () => {
+    setStudentId(""); setFeeTypeId("all"); setDiscountType("PERCENTAGE");
+    setDiscountValue(""); setReason("");
+  };
+
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleSubmit = async () => {
+    if (!studentId || !discountValue) {
+      toast({ title: "Student and discount value are required", variant: "destructive" }); return;
+    }
+    const val = parseFloat(discountValue);
+    if (isNaN(val) || val <= 0) {
+      toast({ title: "Enter a valid positive discount value", variant: "destructive" }); return;
+    }
+    if (discountType === "PERCENTAGE" && val > 100) {
+      toast({ title: "Percentage cannot exceed 100%", variant: "destructive" }); return;
+    }
+    setLoading(true);
+    try {
+      const body: Record<string, unknown> = {
+        studentId: Number(studentId), discountType, discountValue: val,
+      };
+      if (feeTypeId && feeTypeId !== "all") body["feeTypeId"] = Number(feeTypeId);
+      if (reason.trim()) body["reason"] = reason.trim();
+
+      await authedFetch("/api/finance/discounts", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: "Discount created", description: `${discountType === "PERCENTAGE" ? val + "%" : "৳" + val} discount applied` });
+      onCreated();
+      handleClose();
+    } catch (e: any) {
+      toast({ title: "Failed to create discount", description: e.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Tag className="h-4 w-4" /> Add Discount / Scholarship
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Discounts are automatically applied when bulk-generating invoices. Fee-type-specific discounts take priority over catch-all discounts.
+          </p>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          <div className="space-y-1.5">
+            <Label>Student *</Label>
+            <Select value={studentId} onValueChange={setStudentId}>
+              <SelectTrigger><SelectValue placeholder="Search student…" /></SelectTrigger>
+              <SelectContent>
+                {(studentsData?.students ?? []).map((s: any) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.firstName} {s.lastName}
+                    <span className="text-muted-foreground ml-1.5 font-mono text-xs">({s.studentId})</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Applies To</Label>
+            <Select value={feeTypeId} onValueChange={setFeeTypeId}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Fee Types (catch-all)</SelectItem>
+                {(feeTypesData?.feeTypes ?? []).map(f => (
+                  <SelectItem key={f.id} value={String(f.id)}>{f.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Discount Type *</Label>
+              <Select value={discountType} onValueChange={v => setDiscountType(v as any)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PERCENTAGE">Percentage (%)</SelectItem>
+                  <SelectItem value="FIXED">Fixed Amount (৳)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Value *</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                  {discountType === "PERCENTAGE" ? "%" : "৳"}
+                </span>
+                <Input
+                  type="number" step="0.01" min="0.01"
+                  max={discountType === "PERCENTAGE" ? "100" : undefined}
+                  className="pl-7"
+                  value={discountValue}
+                  onChange={e => setDiscountValue(e.target.value)}
+                  placeholder={discountType === "PERCENTAGE" ? "e.g. 25" : "e.g. 500"}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Reason / Note <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Input
+              value={reason} onChange={e => setReason(e.target.value)}
+              placeholder="e.g. Merit scholarship, sibling discount, financial aid…"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose} disabled={loading}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={loading}>
+            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : <><Tag className="mr-2 h-4 w-4" /> Add Discount</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DiscountsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [addOpen, setAddOpen] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
+  const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const { data, isLoading, refetch } = useQuery<{ discounts: Discount[]; total: number }>({
+    queryKey: ["discounts", activeFilter],
+    queryFn: () => authedFetch(
+      activeFilter === "active"
+        ? "/api/finance/discounts?active=true"
+        : "/api/finance/discounts",
+    ),
+  });
+
+  const discounts = (data?.discounts ?? []).filter(d =>
+    activeFilter === "inactive" ? !d.isActive : true,
+  );
+
+  const toggleActive = async (d: Discount) => {
+    setTogglingId(d.id);
+    try {
+      await authedFetch(`/api/finance/discounts/${d.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive: !d.isActive }),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: d.isActive ? "Discount deactivated" : "Discount activated" });
+      qc.invalidateQueries({ queryKey: ["discounts"] });
+      refetch();
+    } catch (e: any) {
+      toast({ title: "Failed to update", description: e.message, variant: "destructive" });
+    } finally { setTogglingId(null); }
+  };
+
+  const deleteDiscount = async (id: number) => {
+    setDeletingId(id);
+    try {
+      await authedFetch(`/api/finance/discounts/${id}`, { method: "DELETE" });
+      toast({ title: "Discount deleted" });
+      qc.invalidateQueries({ queryKey: ["discounts"] });
+      refetch();
+    } catch (e: any) {
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
+    } finally { setDeletingId(null); }
+  };
+
+  const activeCount  = (data?.discounts ?? []).filter(d => d.isActive).length;
+  const pctCount     = (data?.discounts ?? []).filter(d => d.discountType === "PERCENTAGE").length;
+
+  return (
+    <div className="space-y-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          {(["all", "active", "inactive"] as const).map(f => (
+            <button key={f} onClick={() => setActiveFilter(f)}
+              className={cn("rounded-full px-3 py-1 text-xs font-medium border transition-colors capitalize",
+                activeFilter === f
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-border hover:border-primary/50 text-muted-foreground")}
+            >
+              {f}
+              {f === "active" && activeCount > 0 && (
+                <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-[10px] text-white font-bold">{activeCount}</span>
+              )}
+            </button>
+          ))}
+        </div>
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Discount
+        </Button>
+      </div>
+
+      {/* Summary strip */}
+      {(data?.discounts.length ?? 0) > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: "Total Discounts", value: data?.total ?? 0, cls: "text-foreground" },
+            { label: "Active",          value: activeCount,       cls: "text-green-600" },
+            { label: "Percentage",      value: pctCount,          cls: "text-indigo-600" },
+          ].map(s => (
+            <div key={s.label} className="rounded-lg border border-border bg-card p-3 text-center">
+              <p className={cn("text-2xl font-bold tabular-nums", s.cls)}>{s.value}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-0.5">{s.label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Info banner */}
+      <div className="flex items-start gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5 text-xs text-blue-800">
+        <UserCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+        Active discounts are <strong>automatically applied</strong> when bulk-generating invoices. Fee-type-specific discounts take priority over catch-all discounts for the same student.
+      </div>
+
+      {/* Table */}
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30">
+              {["Student", "Applies To", "Discount", "Reason", "Status", "Created By", "Actions"].map(h => (
+                <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {isLoading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={i}>{Array.from({ length: 7 }).map((_, j) => (
+                  <td key={j} className="px-3 py-3"><div className="h-4 bg-muted rounded animate-pulse w-full" /></td>
+                ))}</tr>
+              ))
+            ) : discounts.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-14 text-center text-sm text-muted-foreground">
+                  <Tag className="h-8 w-8 mx-auto mb-2 opacity-25" />
+                  <p className="font-medium">No discounts found</p>
+                  <p className="text-xs mt-1">Add a discount or scholarship to get started</p>
+                </td>
+              </tr>
+            ) : discounts.map(d => (
+              <tr key={d.id} className={cn("hover:bg-muted/20 transition-colors", !d.isActive && "opacity-50")}>
+                <td className="px-3 py-3">
+                  <p className="font-medium text-sm">{d.studentName}</p>
+                  <p className="text-xs text-muted-foreground font-mono">{d.studentKey}</p>
+                </td>
+                <td className="px-3 py-3 text-xs">
+                  {d.feeTypeName
+                    ? <span className="inline-block rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-indigo-700 font-medium">{d.feeTypeName}</span>
+                    : <span className="inline-block rounded-full bg-muted border border-border px-2 py-0.5 text-muted-foreground">All fees</span>}
+                </td>
+                <td className="px-3 py-3">
+                  <div className="flex items-center gap-1.5">
+                    {d.discountType === "PERCENTAGE"
+                      ? <Percent className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                      : <span className="text-xs font-bold text-green-600 shrink-0">৳</span>}
+                    <span className="font-bold tabular-nums text-sm">
+                      {d.discountType === "PERCENTAGE" ? `${d.discountValue}%` : `৳${d.discountValue.toLocaleString()}`}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{d.discountType === "PERCENTAGE" ? "Percentage" : "Fixed Amount"}</p>
+                </td>
+                <td className="px-3 py-3 text-xs text-muted-foreground max-w-[180px]">
+                  <span className="line-clamp-2">{d.reason ?? "—"}</span>
+                </td>
+                <td className="px-3 py-3">
+                  <button
+                    onClick={() => toggleActive(d)}
+                    disabled={togglingId === d.id}
+                    className="flex items-center gap-1.5 text-xs font-medium transition-colors disabled:opacity-50"
+                    title={d.isActive ? "Click to deactivate" : "Click to activate"}
+                  >
+                    {togglingId === d.id
+                      ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      : d.isActive
+                        ? <ToggleRight className="h-5 w-5 text-green-500" />
+                        : <ToggleLeft className="h-5 w-5 text-muted-foreground" />}
+                    <span className={d.isActive ? "text-green-600" : "text-muted-foreground"}>
+                      {d.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </button>
+                </td>
+                <td className="px-3 py-3 text-xs text-muted-foreground">
+                  <p>{d.createdBy ?? "—"}</p>
+                  <p className="text-[10px] mt-0.5">{new Date(d.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
+                </td>
+                <td className="px-3 py-3">
+                  <button
+                    onClick={() => deleteDiscount(d.id)}
+                    disabled={deletingId === d.id}
+                    className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    {deletingId === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <AddDiscountDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={() => { refetch(); qc.invalidateQueries({ queryKey: ["discounts"] }); }} />
+    </div>
+  );
+}
+
 // ── Payment Requests Tab ───────────────────────────────────────────────────
 
 type PaymentRequest = {
@@ -1077,6 +1423,9 @@ export default function FinancePage() {
           <TabsTrigger value="payment-requests" className="flex items-center gap-1.5">
             <Inbox className="h-3.5 w-3.5" /> Payment Requests
           </TabsTrigger>
+          <TabsTrigger value="discounts" className="flex items-center gap-1.5">
+            <Tag className="h-3.5 w-3.5" /> Discounts
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -1218,6 +1567,11 @@ export default function FinancePage() {
         {/* ── Payment Requests tab ── */}
         <TabsContent value="payment-requests" className="mt-4">
           <PaymentRequestsTab />
+        </TabsContent>
+
+        {/* ── Discounts tab ── */}
+        <TabsContent value="discounts" className="mt-4">
+          <DiscountsTab />
         </TabsContent>
       </Tabs>
 

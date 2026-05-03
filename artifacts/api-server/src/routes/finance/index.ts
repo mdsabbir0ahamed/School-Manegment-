@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { feeTypesTable, invoicesTable, transactionsTable, studentsTable, classesTable } from "@workspace/db";
 import { eq, and, count, inArray } from "drizzle-orm";
+import { applyDiscount } from "./discounts.js";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import { audit } from "../../lib/audit.js";
@@ -232,17 +233,22 @@ router.post("/invoices/bulk-generate", requireAuth, requireFinance, async (req: 
     res.json({ created: 0, skipped, total: students.length, invoices: [], message: "All students already have an invoice for this period" }); return;
   }
 
-  // Batch insert
-  const inserted = await db.insert(invoicesTable).values(
-    toCreate.map(s => ({
-      invoiceNumber: genInvoiceNumber(),
-      studentId: s.id,
-      feeTypeId,
-      month: month ?? null,
-      totalAmount: String(unitAmount),
-      dueDate,
-    }))
-  ).returning();
+  // Apply per-student discounts and batch insert
+  const invoiceValues = await Promise.all(
+    toCreate.map(async s => {
+      const { finalAmount } = await applyDiscount(s.id, feeTypeId, unitAmount);
+      return {
+        invoiceNumber: genInvoiceNumber(),
+        studentId: s.id,
+        feeTypeId,
+        month: month ?? null,
+        totalAmount: String(finalAmount),
+        dueDate,
+      };
+    }),
+  );
+
+  const inserted = await db.insert(invoicesTable).values(invoiceValues).returning();
 
   await audit({
     userId: req.userId, userEmail: req.userEmail, userRole: req.userRole,

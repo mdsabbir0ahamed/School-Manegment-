@@ -23,6 +23,7 @@ import hardwareRouter from "./hardware/index.js";
 import aiSummaryRouter from "./ai-summary/index.js";
 import payrollRouter from "./payroll/index.js";
 import reminderSettingsRouter from "./finance/reminder-settings.js";
+import discountsRouter from "./finance/discounts.js";
 import parentFeeStatementRouter from "./parent/fee-statement.js";
 import parentPaymentRequestsRouter from "./parent/payment-requests.js";
 
@@ -52,6 +53,7 @@ router.use(hardwareRouter);
 router.use(aiSummaryRouter);
 router.use(payrollRouter);
 router.use(reminderSettingsRouter);
+router.use(discountsRouter);
 router.use(parentFeeStatementRouter);
 router.use(parentPaymentRequestsRouter);
 
