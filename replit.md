@@ -42,6 +42,7 @@ A full-stack, production-ready School/Madrasa Management System (ERP) built as a
 | ACCOUNTANT  | accountant@school.edu     | accountant123 |
 | PARENT      | parent1@school.edu        | parent123     |
 | PARENT      | parent2@school.edu        | parent123     |
+| STUDENT     | student1@school.edu       | student123    |
 
 ## Modules (22+)
 

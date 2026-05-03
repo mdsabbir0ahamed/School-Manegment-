@@ -250,6 +250,7 @@ All routes are prefixed with `/api/`. Key endpoint groups:
 | TEACHER | sarah.ahmed@school.edu | teacher123 |
 | ACCOUNTANT | accountant@school.edu | accountant123 |
 | PARENT | parent1@school.edu | parent123 |
+| STUDENT | student1@school.edu | student123 |
 
 ## Key Source Files
 
