@@ -25,6 +25,7 @@ import payrollRouter from "./payroll/index.js";
 import reminderSettingsRouter from "./finance/reminder-settings.js";
 import discountsRouter from "./finance/discounts.js";
 import expensesRouter from "./finance/expenses.js";
+import pnlRouter from "./finance/pnl.js";
 import parentFeeStatementRouter from "./parent/fee-statement.js";
 import parentPaymentRequestsRouter from "./parent/payment-requests.js";
 
@@ -56,6 +57,7 @@ router.use(payrollRouter);
 router.use(reminderSettingsRouter);
 router.use(discountsRouter);
 router.use(expensesRouter);
+router.use(pnlRouter);
 router.use(parentFeeStatementRouter);
 router.use(parentPaymentRequestsRouter);
 

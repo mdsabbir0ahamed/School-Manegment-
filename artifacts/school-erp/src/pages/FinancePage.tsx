@@ -25,10 +25,11 @@ import {
   Inbox, ThumbsUp, ThumbsDown, AlertCircle, XCircle,
   Layers, SkipForward, ListChecks, Tag, Percent, ToggleLeft, ToggleRight, Trash2, UserCheck,
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
+  TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, ComposedChart, Line, ReferenceLine,
 } from "recharts";
 import { customFetch } from "@workspace/api-client-react";
 
@@ -785,6 +786,286 @@ function RemindersTab() {
           <li className="flex gap-2"><span className="text-indigo-500 font-bold">4.</span> "Send Now" bypasses the daily limit for manual testing or urgent batches.</li>
         </ul>
       </div>
+    </div>
+  );
+}
+
+// ── P&L Tab ────────────────────────────────────────────────────────────────
+
+type PnLMonth = { month: string; label: string; income: number; expenses: number; net: number };
+type PnLData = {
+  year: number;
+  kpis: {
+    totalIncome: number; totalExpenses: number; netSurplus: number; marginPct: number;
+    trailing3Avg: number;
+    bestMonth:  { label: string; net: number } | null;
+    worstMonth: { label: string; net: number } | null;
+  };
+  monthly: PnLMonth[];
+};
+
+function PnLTab() {
+  const [year, setYear] = useState(new Date().getFullYear());
+
+  const { data, isLoading } = useQuery<PnLData>({
+    queryKey: ["pnl", year],
+    queryFn: () => authedFetch(`/api/finance/pnl?year=${year}`),
+  });
+
+  const kpis = data?.kpis;
+  const monthly = data?.monthly ?? [];
+
+  // Chart data — only show months up to today when viewing current year
+  const now = new Date();
+  const cutoffIdx = year < now.getFullYear() ? 12 : now.getMonth(); // 0-based, show up to current month
+  const chartData = monthly.slice(0, year < now.getFullYear() ? 12 : cutoffIdx + 1).map(m => ({
+    name: m.label,
+    Income:   m.income,
+    Expenses: m.expenses,
+    Net:      m.net,
+  }));
+
+  const surplus = (kpis?.netSurplus ?? 0) >= 0;
+  const hasData = monthly.some(m => m.income > 0 || m.expenses > 0);
+
+  const fmt = (v: number) => `৳${Math.abs(v).toLocaleString()}`;
+  const fmtSigned = (v: number) => (v >= 0 ? `+৳${v.toLocaleString()}` : `-৳${Math.abs(v).toLocaleString()}`);
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded-lg border border-border bg-white shadow-lg p-3 text-xs min-w-[160px]">
+        <p className="font-semibold mb-2 text-foreground">{label}</p>
+        {payload.map((p: any) => (
+          <div key={p.name} className="flex justify-between gap-6 mb-0.5">
+            <span style={{ color: p.color }}>{p.name}</span>
+            <span className="font-mono font-medium">{`৳${Number(p.value).toLocaleString()}`}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Year navigator */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-1.5">
+          <Activity className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">Profit & Loss Statement</h2>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => setYear(y => y - 1)}
+            className="p-1.5 rounded border border-border hover:bg-muted transition-colors">
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <span className="text-sm font-bold tabular-nums w-14 text-center">{year}</span>
+          <button onClick={() => setYear(y => y + 1)}
+            className="p-1.5 rounded border border-border hover:bg-muted transition-colors">
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* KPI cards */}
+      {isLoading ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-lg border bg-card p-4 h-24 animate-pulse bg-muted" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {/* Total Income */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Income</p>
+              <TrendingUp className="h-4 w-4 text-green-500" />
+            </div>
+            <p className="text-xl font-bold tabular-nums text-green-600">{fmt(kpis?.totalIncome ?? 0)}</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Collected payments</p>
+          </div>
+
+          {/* Total Expenses */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Expenses</p>
+              <TrendingDown className="h-4 w-4 text-red-500" />
+            </div>
+            <p className="text-xl font-bold tabular-nums text-red-600">{fmt(kpis?.totalExpenses ?? 0)}</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Paid expenses</p>
+          </div>
+
+          {/* Net Surplus / Deficit */}
+          <div className={cn("rounded-lg border p-4", surplus ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50")}>
+            <div className="flex items-center justify-between mb-2">
+              <p className={cn("text-xs uppercase tracking-wider font-medium", surplus ? "text-green-700" : "text-red-700")}>
+                Net {surplus ? "Surplus" : "Deficit"}
+              </p>
+              {surplus
+                ? <ArrowUpRight className="h-4 w-4 text-green-600" />
+                : <ArrowDownRight className="h-4 w-4 text-red-600" />}
+            </div>
+            <p className={cn("text-xl font-bold tabular-nums", surplus ? "text-green-700" : "text-red-700")}>
+              {fmtSigned(kpis?.netSurplus ?? 0)}
+            </p>
+            <p className={cn("text-[10px] mt-1", surplus ? "text-green-600" : "text-red-600")}>
+              {Math.abs(kpis?.marginPct ?? 0).toFixed(1)}% margin
+            </p>
+          </div>
+
+          {/* 3-month trailing avg */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">3-Mo Avg Net</p>
+              <Minus className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <p className={cn("text-xl font-bold tabular-nums",
+              (kpis?.trailing3Avg ?? 0) >= 0 ? "text-green-600" : "text-red-600")}>
+              {fmtSigned(Math.round(kpis?.trailing3Avg ?? 0))}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">Last 3 active months</p>
+          </div>
+        </div>
+      )}
+
+      {/* Best / worst month badges */}
+      {!isLoading && hasData && (
+        <div className="flex gap-3 flex-wrap">
+          {kpis?.bestMonth && (
+            <div className="flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700">
+              <ArrowUpRight className="h-3.5 w-3.5" />
+              Best month: <span className="font-bold">{kpis.bestMonth.label}</span>
+              &nbsp;({fmtSigned(kpis.bestMonth.net)})
+            </div>
+          )}
+          {kpis?.worstMonth && kpis.worstMonth.label !== kpis.bestMonth?.label && (
+            <div className="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">
+              <ArrowDownRight className="h-3.5 w-3.5" />
+              Worst month: <span className="font-bold">{kpis.worstMonth.label}</span>
+              &nbsp;({fmtSigned(kpis.worstMonth.net)})
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Main chart */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          Income vs Expenses — {year}
+          <span className="ml-auto flex items-center gap-3 text-xs font-normal text-muted-foreground">
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-[#22c55e]" />Income</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-[#ef4444]" />Expenses</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full border-2 border-[#6366f1] bg-white" />Net</span>
+          </span>
+        </h3>
+        {!hasData ? (
+          <div className="h-64 flex flex-col items-center justify-center text-sm text-muted-foreground">
+            <BarChart3 className="h-10 w-10 mb-3 opacity-20" />
+            <p className="font-medium">No financial data for {year}</p>
+            <p className="text-xs mt-1">Record income (via transactions) and expenses to see your P&L</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={280}>
+            <ComposedChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={v => v >= 1000 ? `৳${(v / 1000).toFixed(0)}k` : `৳${v}`} />
+              <Tooltip content={<CustomTooltip />} />
+              <ReferenceLine y={0} stroke="hsl(var(--border))" strokeWidth={1.5} />
+              <Bar dataKey="Income"   fill="#22c55e" radius={[4,4,0,0]} maxBarSize={32} />
+              <Bar dataKey="Expenses" fill="#ef4444" radius={[4,4,0,0]} maxBarSize={32} />
+              <Line dataKey="Net" type="monotone" stroke="#6366f1" strokeWidth={2.5}
+                dot={{ r: 4, fill: "#6366f1", strokeWidth: 2, stroke: "#fff" }}
+                activeDot={{ r: 6 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Monthly breakdown table */}
+      {hasData && (
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border bg-muted/30">
+            <h3 className="text-sm font-semibold">Monthly Breakdown</h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                {["Month", "Income", "Expenses", "Net Surplus / Deficit", "Margin"].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {monthly.map(m => {
+                const active = m.income > 0 || m.expenses > 0;
+                const isPos  = m.net >= 0;
+                const margin = m.income > 0 ? (m.net / m.income) * 100 : null;
+                return (
+                  <tr key={m.month} className={cn("transition-colors", active ? "hover:bg-muted/20" : "opacity-40")}>
+                    <td className="px-4 py-3 font-medium text-sm">{m.label}</td>
+                    <td className="px-4 py-3 tabular-nums text-green-600 font-medium">
+                      {m.income > 0 ? `৳${m.income.toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums text-red-600 font-medium">
+                      {m.expenses > 0 ? `৳${m.expenses.toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {active ? (
+                        <span className={cn("inline-flex items-center gap-1.5 font-bold tabular-nums text-sm",
+                          isPos ? "text-green-700" : "text-red-700")}>
+                          {isPos
+                            ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+                            : <ArrowDownRight className="h-3.5 w-3.5 shrink-0" />}
+                          {fmtSigned(m.net)}
+                        </span>
+                      ) : <span className="text-muted-foreground text-xs">No activity</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {margin !== null ? (
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-20 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className={cn("h-full rounded-full transition-all", isPos ? "bg-green-500" : "bg-red-500")}
+                              style={{ width: `${Math.min(Math.abs(margin), 100)}%` }}
+                            />
+                          </div>
+                          <span className={cn("text-xs font-medium tabular-nums", isPos ? "text-green-600" : "text-red-600")}>
+                            {margin.toFixed(1)}%
+                          </span>
+                        </div>
+                      ) : <span className="text-muted-foreground text-xs">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {/* Annual totals footer */}
+            <tfoot>
+              <tr className="border-t-2 border-border bg-muted/40 font-bold">
+                <td className="px-4 py-3 text-sm">Annual Total</td>
+                <td className="px-4 py-3 tabular-nums text-green-700">{fmt(kpis?.totalIncome ?? 0)}</td>
+                <td className="px-4 py-3 tabular-nums text-red-700">{fmt(kpis?.totalExpenses ?? 0)}</td>
+                <td className="px-4 py-3">
+                  <span className={cn("inline-flex items-center gap-1.5 font-bold text-sm",
+                    surplus ? "text-green-700" : "text-red-700")}>
+                    {surplus ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+                    {fmtSigned(kpis?.netSurplus ?? 0)}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={cn("text-sm font-bold", surplus ? "text-green-600" : "text-red-600")}>
+                    {(kpis?.marginPct ?? 0).toFixed(1)}%
+                  </span>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -1893,6 +2174,9 @@ export default function FinancePage() {
           <TabsTrigger value="expenses" className="flex items-center gap-1.5">
             <Receipt className="h-3.5 w-3.5" /> Expenses
           </TabsTrigger>
+          <TabsTrigger value="pnl" className="flex items-center gap-1.5">
+            <Activity className="h-3.5 w-3.5" /> P&amp;L
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -2044,6 +2328,11 @@ export default function FinancePage() {
         {/* ── Expenses tab ── */}
         <TabsContent value="expenses" className="mt-4">
           <ExpensesTab />
+        </TabsContent>
+
+        {/* ── P&L tab ── */}
+        <TabsContent value="pnl" className="mt-4">
+          <PnLTab />
         </TabsContent>
       </Tabs>
 
