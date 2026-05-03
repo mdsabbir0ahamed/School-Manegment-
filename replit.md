@@ -55,6 +55,7 @@ A full-stack, production-ready School/Madrasa Management System (ERP) built as a
 8. **Payroll** — Monthly staff salary management, bulk generate, approve/mark-paid workflow, individual payslip PDF download
 9. **Fee Reminder Scheduler** — Configurable daily cron that auto-sends payment reminders to parents/staff based on invoice due-date offsets (before/after); manual "Send Now" trigger; persisted settings per tenant
 10. **Parent Fee Statement** — Parents view full invoice history + per-invoice transaction breakdowns (expandable rows) + summary cards; download branded PDF statement per student; PARENT role can only view their own linked students (ownership enforced server-side)
+11. **Parent Payment Requests** — Parents submit payment evidence (amount, method, txn ref, date) against outstanding invoices; finance staff review, approve (auto-creates transaction + updates invoice) or reject (with optional reason) from a dedicated Finance inbox tab; in-app notifications on both sides; duplicate pending request guard
 11. **Notifications** — In-app notifications, bulk parent notifications, SSE real-time updates
 10. **Audit Log** — Complete action history
 11. **Documents** — Student document storage (URL-based)

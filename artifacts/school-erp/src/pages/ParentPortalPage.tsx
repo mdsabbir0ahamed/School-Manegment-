@@ -1,14 +1,19 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 import {
   Users, CalendarCheck, Banknote, AlertCircle, CheckCircle2,
   Clock, Link2, FileText, Download, Loader2, ChevronDown,
-  ChevronUp, CreditCard, TrendingUp,
+  ChevronUp, CreditCard, TrendingUp, Send, XCircle, HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -83,6 +88,147 @@ const RELATIONSHIP_LABELS: Record<string, string> = {
   GRANDPARENT: "Grandparent", OTHER: "Other",
 };
 
+// ── Submit Payment Dialog ──────────────────────────────────────────────────
+
+const PAYMENT_METHODS = [
+  { value: "BKASH",         label: "bKash" },
+  { value: "NAGAD",         label: "Nagad" },
+  { value: "ROCKET",        label: "Rocket" },
+  { value: "BANK_TRANSFER", label: "Bank Transfer" },
+  { value: "CASH",          label: "Cash" },
+  { value: "CHEQUE",        label: "Cheque" },
+  { value: "OTHER",         label: "Other" },
+];
+
+function SubmitPaymentDialog({
+  inv, open, onClose,
+}: { inv: FeeInvoice | null; open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [method, setMethod] = useState("BKASH");
+  const [amount, setAmount] = useState("");
+  const [transactionRef, setTransactionRef] = useState("");
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split("T")[0]!);
+  const [note, setNote] = useState("");
+
+  const outstanding = inv ? Math.max(0, inv.totalAmount - inv.paidAmount) : 0;
+
+  const submitMutation = useMutation({
+    mutationFn: (body: object) => {
+      const token = localStorage.getItem("erp_token") ?? "";
+      return fetch("/api/parent/payment-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      }).then(async r => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((d as any)?.error ?? "Submission failed");
+        return d;
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Payment submitted for review",
+        description: "Finance staff will verify and approve your payment shortly.",
+      });
+      qc.invalidateQueries({ queryKey: ["payment-requests"] });
+      qc.invalidateQueries({ queryKey: ["fee-statement"] });
+      onClose();
+      setAmount(""); setTransactionRef(""); setNote("");
+    },
+    onError: (e: Error) => toast({ title: "Submission failed", description: e.message, variant: "destructive" }),
+  });
+
+  const handleSubmit = () => {
+    const amtNum = parseFloat(amount);
+    if (!amount || isNaN(amtNum) || amtNum <= 0) {
+      toast({ title: "Enter a valid amount", variant: "destructive" }); return;
+    }
+    if (!paymentDate) {
+      toast({ title: "Payment date is required", variant: "destructive" }); return;
+    }
+    submitMutation.mutate({
+      invoiceId: inv!.id, amount: amtNum, method, transactionRef: transactionRef || undefined,
+      paymentDate, note: note || undefined,
+    });
+  };
+
+  if (!inv) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Send className="h-4 w-4" /> Submit Payment for Review
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            {inv.invoiceNumber} · {inv.feeTypeName}{inv.month ? ` · ${inv.month}` : ""}
+            <br />Outstanding: <span className="font-semibold text-red-600">৳{outstanding.toLocaleString()}</span>
+          </p>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5 text-xs text-blue-700 flex gap-2">
+            <HelpCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            After you submit, the school finance team will verify your payment and update your invoice within 1–2 working days.
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Amount Paid (৳) *</Label>
+              <Input
+                type="number" step="0.01" min="0.01"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                placeholder={outstanding.toString()}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Payment Date *</Label>
+              <Input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Payment Method *</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PAYMENT_METHODS.map(m => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Transaction ID / Reference</Label>
+            <Input
+              value={transactionRef} onChange={e => setTransactionRef(e.target.value)}
+              placeholder="e.g. TXN123456, bKash ref, cheque no."
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Note (optional)</Label>
+            <Input value={note} onChange={e => setNote(e.target.value)} placeholder="Any additional details…" />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={submitMutation.isPending}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={submitMutation.isPending}>
+            {submitMutation.isPending
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting…</>
+              : <><Send className="mr-2 h-4 w-4" /> Submit Payment</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Hooks ──────────────────────────────────────────────────────────────────
 
 function useLinkedStudents(parentUserId?: number) {
@@ -109,7 +255,7 @@ function useFeeStatement(studentId: number) {
 
 // ── Invoice row with expandable transactions ───────────────────────────────
 
-function InvoiceRow({ inv }: { inv: FeeInvoice }) {
+function InvoiceRow({ inv, onSubmitPayment }: { inv: FeeInvoice; onSubmitPayment: (inv: FeeInvoice) => void }) {
   const [expanded, setExpanded] = useState(false);
   const s = STATUS_STYLE[inv.status] ?? STATUS_STYLE["PENDING"]!;
   const Icon = s.icon;
@@ -145,9 +291,19 @@ function InvoiceRow({ inv }: { inv: FeeInvoice }) {
         </td>
         <td className="px-4 py-3 text-xs text-muted-foreground">{inv.dueDate}</td>
         <td className="px-4 py-3">
-          <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold", s.cls)}>
-            <Icon className="h-2.5 w-2.5" />{s.label}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold", s.cls)}>
+              <Icon className="h-2.5 w-2.5" />{s.label}
+            </span>
+            {(inv.status === "PENDING" || inv.status === "OVERDUE") && (
+              <button
+                onClick={e => { e.stopPropagation(); onSubmitPayment(inv); }}
+                className="flex items-center gap-1 rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/20 transition-colors"
+              >
+                <Send className="h-2.5 w-2.5" /> Pay
+              </button>
+            )}
+          </div>
         </td>
       </tr>
 
@@ -193,6 +349,7 @@ function FeeStatementCard({ student }: { student: LinkedStudent }) {
   const { data: stmt, isLoading: stmtLoading } = useFeeStatement(student.id);
   const [downloading, setDownloading] = useState(false);
   const [yearFilter, setYearFilter] = useState<string>("all");
+  const [submitInv, setSubmitInv] = useState<FeeInvoice | null>(null);
 
   const downloadPdf = async () => {
     setDownloading(true);
@@ -313,7 +470,7 @@ function FeeStatementCard({ student }: { student: LinkedStudent }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(inv => <InvoiceRow key={inv.id} inv={inv} />)}
+                {filtered.map(inv => <InvoiceRow key={inv.id} inv={inv} onSubmitPayment={setSubmitInv} />)}
               </tbody>
             </table>
           </div>
@@ -322,6 +479,8 @@ function FeeStatementCard({ student }: { student: LinkedStudent }) {
           </p>
         </div>
       )}
+
+      <SubmitPaymentDialog inv={submitInv} open={!!submitInv} onClose={() => setSubmitInv(null)} />
     </div>
   );
 }

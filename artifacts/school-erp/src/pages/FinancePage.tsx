@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import {
   Plus, Loader2, CreditCard, ChevronLeft, ChevronRight,
   Bell, CheckCircle2, Download, Clock, Play, RefreshCw,
+  Inbox, ThumbsUp, ThumbsDown, AlertCircle, XCircle,
 } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
 
@@ -541,6 +542,216 @@ function RemindersTab() {
   );
 }
 
+// ── Payment Requests Tab ───────────────────────────────────────────────────
+
+type PaymentRequest = {
+  id: number; invoiceId: number; invoiceNumber: string;
+  studentName: string; studentKey: string;
+  parentName: string | null; parentEmail: string | null;
+  amount: number; method: string; transactionRef: string | null;
+  paymentDate: string; note: string | null;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  rejectionReason: string | null; reviewedAt: string | null; reviewedBy: string | null;
+  createdAt: string;
+};
+
+const PR_STATUS: Record<string, { label: string; cls: string }> = {
+  PENDING:  { label: "Pending",  cls: "bg-yellow-100 text-yellow-700" },
+  APPROVED: { label: "Approved", cls: "bg-green-100 text-green-700" },
+  REJECTED: { label: "Rejected", cls: "bg-red-100 text-red-700" },
+};
+
+function RejectDialog({
+  open, onClose, onConfirm, loading,
+}: { open: boolean; onClose: () => void; onConfirm: (reason: string) => void; loading: boolean }) {
+  const [reason, setReason] = useState("");
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Reject Payment Request</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          <p className="text-sm text-muted-foreground">Provide a reason so the parent understands why the request was rejected.</p>
+          <div className="space-y-1">
+            <Label>Reason (optional)</Label>
+            <Input
+              value={reason} onChange={e => setReason(e.target.value)}
+              placeholder="e.g. Transaction ID not found, wrong amount…"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button variant="destructive" onClick={() => onConfirm(reason)} disabled={loading}>
+            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Reject
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PaymentRequestsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [statusFilter, setPrStatusFilter] = useState<string>("PENDING");
+  const [rejectTarget, setRejectTarget] = useState<number | null>(null);
+  const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+
+  const { data, isLoading, refetch } = useQuery<{ requests: PaymentRequest[]; total: number }>({
+    queryKey: ["payment-requests", statusFilter],
+    queryFn: () => authedFetch("/api/parent/payment-requests"),
+  });
+
+  const filtered = (data?.requests ?? []).filter(r =>
+    statusFilter === "all" ? true : r.status === statusFilter,
+  );
+  const pendingCount = (data?.requests ?? []).filter(r => r.status === "PENDING").length;
+
+  const approve = async (id: number) => {
+    setApprovingId(id);
+    try {
+      await authedFetch(`/api/finance/payment-requests/${id}/approve`, { method: "PATCH" });
+      toast({ title: "Payment approved", description: "Invoice updated and parent notified." });
+      qc.invalidateQueries({ queryKey: ["payment-requests"] });
+      refetch();
+    } catch (e: any) {
+      toast({ title: "Approval failed", description: e.message, variant: "destructive" });
+    } finally { setApprovingId(null); }
+  };
+
+  const reject = async (id: number, reason: string) => {
+    setRejectingId(id);
+    try {
+      await authedFetch(`/api/finance/payment-requests/${id}/reject`, {
+        method: "PATCH",
+        body: JSON.stringify({ reason }),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: "Request rejected", description: "Parent has been notified." });
+      qc.invalidateQueries({ queryKey: ["payment-requests"] });
+      setRejectTarget(null);
+      refetch();
+    } catch (e: any) {
+      toast({ title: "Rejection failed", description: e.message, variant: "destructive" });
+    } finally { setRejectingId(null); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {pendingCount > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {pendingCount} pending payment request{pendingCount > 1 ? "s" : ""} awaiting review
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        {["PENDING", "APPROVED", "REJECTED", "all"].map(s => (
+          <button key={s} onClick={() => setPrStatusFilter(s)}
+            className={cn("rounded-full px-3 py-1 text-xs font-medium border transition-colors",
+              statusFilter === s ? "bg-primary text-primary-foreground border-primary" : "border-border hover:border-primary/50 text-muted-foreground")}
+          >
+            {s === "all" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}
+            {s === "PENDING" && pendingCount > 0 && (
+              <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] text-white font-bold">{pendingCount}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30">
+              {["Student", "Invoice", "Amount", "Method", "Ref", "Pay Date", "Submitted", "Status", "Actions"].map(h => (
+                <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {isLoading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={i}>{Array.from({ length: 9 }).map((_, j) => (
+                  <td key={j} className="px-3 py-3"><Skeleton className="h-4 w-full" /></td>
+                ))}</tr>
+              ))
+            ) : filtered.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  <Inbox className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  No {statusFilter !== "all" ? statusFilter.toLowerCase() : ""} payment requests
+                </td>
+              </tr>
+            ) : filtered.map(pr => {
+              const s = PR_STATUS[pr.status] ?? PR_STATUS["PENDING"]!;
+              return (
+                <tr key={pr.id} className="hover:bg-muted/20 transition-colors">
+                  <td className="px-3 py-3">
+                    <p className="font-medium text-sm">{pr.studentName}</p>
+                    {pr.parentName && <p className="text-xs text-muted-foreground">{pr.parentName}</p>}
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs">{pr.invoiceNumber}</td>
+                  <td className="px-3 py-3 tabular-nums font-semibold text-green-700">৳{pr.amount.toLocaleString()}</td>
+                  <td className="px-3 py-3 text-xs">
+                    <span className="inline-block rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-indigo-700 font-medium">{pr.method}</span>
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{pr.transactionRef ?? "—"}</td>
+                  <td className="px-3 py-3 text-xs text-muted-foreground">{pr.paymentDate}</td>
+                  <td className="px-3 py-3 text-xs text-muted-foreground">
+                    {new Date(pr.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  </td>
+                  <td className="px-3 py-3">
+                    <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold", s.cls)}>{s.label}</span>
+                    {pr.status === "REJECTED" && pr.rejectionReason && (
+                      <p className="text-[10px] text-red-500 mt-0.5 max-w-[120px] truncate" title={pr.rejectionReason}>{pr.rejectionReason}</p>
+                    )}
+                    {pr.status !== "PENDING" && pr.reviewedBy && (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">by {pr.reviewedBy}</p>
+                    )}
+                  </td>
+                  <td className="px-3 py-3">
+                    {pr.status === "PENDING" && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => approve(pr.id)}
+                          disabled={approvingId === pr.id}
+                          className="flex items-center gap-1 rounded-md bg-green-50 border border-green-200 px-2 py-1 text-[11px] font-semibold text-green-700 hover:bg-green-100 disabled:opacity-50 transition-colors"
+                        >
+                          {approvingId === pr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ThumbsUp className="h-3 w-3" />}
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => setRejectTarget(pr.id)}
+                          className="flex items-center gap-1 rounded-md bg-red-50 border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-100 transition-colors"
+                        >
+                          <ThumbsDown className="h-3 w-3" /> Reject
+                        </button>
+                      </div>
+                    )}
+                    {pr.status !== "PENDING" && (
+                      <span className="text-xs text-muted-foreground">
+                        {pr.reviewedAt ? new Date(pr.reviewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <RejectDialog
+        open={rejectTarget !== null}
+        onClose={() => setRejectTarget(null)}
+        onConfirm={(reason) => rejectTarget !== null && reject(rejectTarget, reason)}
+        loading={rejectingId !== null}
+      />
+    </div>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────
 
 export default function FinancePage() {
@@ -616,6 +827,9 @@ export default function FinancePage() {
           <TabsTrigger value="transactions">Transactions</TabsTrigger>
           <TabsTrigger value="reminders" className="flex items-center gap-1.5">
             <Bell className="h-3.5 w-3.5" /> Reminders
+          </TabsTrigger>
+          <TabsTrigger value="payment-requests" className="flex items-center gap-1.5">
+            <Inbox className="h-3.5 w-3.5" /> Payment Requests
           </TabsTrigger>
         </TabsList>
 
@@ -753,6 +967,11 @@ export default function FinancePage() {
         {/* ── Reminders tab ── */}
         <TabsContent value="reminders" className="mt-4">
           <RemindersTab />
+        </TabsContent>
+
+        {/* ── Payment Requests tab ── */}
+        <TabsContent value="payment-requests" className="mt-4">
+          <PaymentRequestsTab />
         </TabsContent>
       </Tabs>
 

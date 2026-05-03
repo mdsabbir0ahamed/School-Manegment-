@@ -16,3 +16,4 @@ export * from "./parent-students";
 export * from "./hardware";
 export * from "./payroll";
 export * from "./reminder-settings";
+export * from "./payment-requests";
