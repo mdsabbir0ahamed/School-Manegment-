@@ -27,7 +27,9 @@ import {
   Search, Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight,
   Eye, Lock, Upload, CheckCircle2, XCircle, AlertCircle,
   ChevronDown, ChevronUp, Clock, FileText, CreditCard, Download,
+  MessageSquare, Send, Trash,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const CSV_TEMPLATE = `first_name,last_name,gender,date_of_birth,parent_name,parent_phone,parent_email,address
@@ -754,12 +756,141 @@ function StatementHistoryTab({ studentId }: { studentId: number }) {
   );
 }
 
+interface StudentNote {
+  id: number; studentId: number; authorUserId: number; authorName: string;
+  note: string; createdAt: string; updatedAt: string;
+}
+
+function StudentNotesTab({ studentId }: { studentId: number }) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [noteText, setNoteText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const canWrite = user?.role === "SUPER_ADMIN" || user?.role === "TEACHER";
+  const isAdmin = user?.role === "SUPER_ADMIN";
+
+  const { data, isLoading, refetch } = useQuery<{ notes: StudentNote[] }>({
+    queryKey: ["student-notes", studentId],
+    queryFn: () => customFetch(`/api/student-notes?studentId=${studentId}`),
+  });
+
+  const handleSubmit = async () => {
+    if (!noteText.trim()) return;
+    setSubmitting(true);
+    try {
+      await customFetch("/api/student-notes", {
+        method: "POST",
+        body: JSON.stringify({ studentId, note: noteText.trim() }),
+      });
+      toast({ title: "Note added" });
+      setNoteText("");
+      refetch();
+    } catch {
+      toast({ title: "Failed to add note", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Delete this note?")) return;
+    setDeletingId(id);
+    try {
+      await customFetch(`/api/student-notes/${id}`, { method: "DELETE" });
+      toast({ title: "Note deleted" });
+      refetch();
+    } catch (err: any) {
+      toast({ title: err?.data?.message ?? "Failed to delete note", variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4 pt-1">
+      {/* Add note form — teachers and admins only */}
+      {canWrite && (
+        <div className="space-y-2">
+          <Textarea
+            placeholder="Add a private note about this student…"
+            className="text-sm resize-none min-h-[80px]"
+            value={noteText}
+            onChange={e => setNoteText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handleSubmit(); }}
+          />
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] text-muted-foreground">Ctrl+Enter to submit · Visible to staff only</p>
+            <Button size="sm" onClick={handleSubmit} disabled={!noteText.trim() || submitting} className="h-7 text-xs">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+              Add Note
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Notes list */}
+      {isLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-14" /><Skeleton className="h-14" />
+        </div>
+      ) : !data?.notes.length ? (
+        <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
+          <MessageSquare className="h-6 w-6 mx-auto mb-2 opacity-30" />
+          No notes yet{canWrite ? " — add the first one above" : ""}
+        </div>
+      ) : (
+        <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+          {data.notes.map(n => {
+            const isOwner = n.authorUserId === user?.id;
+            const canDelete = isAdmin || isOwner;
+            return (
+              <div key={n.id} className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 group">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-bold text-primary shrink-0">
+                      {n.authorName.split(" ").map(p => p[0]).join("").slice(0, 2)}
+                    </div>
+                    <span className="text-xs font-medium">{n.authorName}</span>
+                    <span className="text-[10px] text-muted-foreground">·</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {new Date(n.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      {" "}
+                      {new Date(n.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  </div>
+                  {canDelete && (
+                    <button
+                      onClick={() => handleDelete(n.id)}
+                      disabled={deletingId === n.id}
+                      className="p-0.5 text-muted-foreground hover:text-destructive rounded opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                      title="Delete note"
+                    >
+                      {deletingId === n.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Trash className="h-3.5 w-3.5" />}
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{n.note}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ViewDialog({ student, open, onClose }: { student: Student | null; open: boolean; onClose: () => void }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [downloading, setDownloading] = useState(false);
   const [emailing, setEmailing] = useState(false);
   const canFinance = user?.role === "SUPER_ADMIN" || user?.role === "ACCOUNTANT";
+  const canNotes = user?.role === "SUPER_ADMIN" || user?.role === "TEACHER" || user?.role === "ACCOUNTANT";
 
   if (!student) return null;
 
@@ -861,6 +992,11 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
                 <Clock className="h-3.5 w-3.5" /> Statement History
               </TabsTrigger>
             )}
+            {canNotes && (
+              <TabsTrigger value="notes" className="gap-1.5 text-xs">
+                <MessageSquare className="h-3.5 w-3.5" /> Notes
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="profile">
@@ -881,6 +1017,12 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
           {canFinance && (
             <TabsContent value="statement-history">
               <StatementHistoryTab studentId={student.id} />
+            </TabsContent>
+          )}
+
+          {canNotes && (
+            <TabsContent value="notes">
+              <StudentNotesTab studentId={student.id} />
             </TabsContent>
           )}
         </Tabs>

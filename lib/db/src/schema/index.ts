@@ -23,3 +23,4 @@ export * from "./budgets";
 export * from "./fee-schedules";
 export * from "./fee-statement-logs";
 export * from "./fee-statement-schedule";
+export * from "./student-notes";
