@@ -2669,6 +2669,11 @@ type StatActivityResp = {
   staffList: { id: number; name: string; role: string }[];
 };
 
+type ScheduleConfig = {
+  isEnabled: boolean; dayOfMonth: number; hour: number;
+  lastRunAt: string | null; lastRunCount: number; lastRunErrors: number;
+};
+
 function StatementActivityTab() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo,   setDateTo]   = useState("");
@@ -2676,6 +2681,65 @@ function StatementActivityTab() {
   const [staffId,  setStaffId]  = useState("all");
   const [page,     setPage]     = useState(0);
   const PAGE_SIZE_SA = 20;
+
+  // Scheduler state
+  const [schedOpen,    setSchedOpen]    = useState(false);
+  const [schedEnabled, setSchedEnabled] = useState(false);
+  const [schedDay,     setSchedDay]     = useState(1);
+  const [schedHour,    setSchedHour]    = useState(8);
+  const [runResult,    setRunResult]    = useState<{ sent: number; errors: number; skippedNoEmail: number } | null>(null);
+  const { toast } = useToast();
+  const qcSched = useQueryClient();
+
+  const { data: schedData, isError: schedErr } = useQuery<ScheduleConfig>({
+    queryKey: ["statement-schedule"],
+    queryFn: () => authedFetch<ScheduleConfig>("/api/finance/statement-schedule"),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (schedData) {
+      setSchedEnabled(schedData.isEnabled);
+      setSchedDay(schedData.dayOfMonth);
+      setSchedHour(schedData.hour);
+    }
+  }, [schedData]);
+
+  const saveSched = useMutation({
+    mutationFn: () => authedFetch<{ ok: boolean }>("/api/finance/statement-schedule", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isEnabled: schedEnabled, dayOfMonth: schedDay, hour: schedHour }),
+    }),
+    onSuccess: () => { qcSched.invalidateQueries({ queryKey: ["statement-schedule"] }); toast({ title: "Scheduler settings saved" }); },
+    onError: () => toast({ title: "Failed to save", variant: "destructive" }),
+  });
+
+  const triggerSched = useMutation({
+    mutationFn: () => authedFetch<{ sent: number; errors: number; skippedNoEmail: number; skipped: boolean }>(
+      "/api/finance/statement-schedule/trigger", { method: "POST" }
+    ),
+    onSuccess: (d) => {
+      qcSched.invalidateQueries({ queryKey: ["statement-schedule"] });
+      qcSched.invalidateQueries({ queryKey: ["statement-activity"] });
+      setRunResult({ sent: d.sent, errors: d.errors, skippedNoEmail: d.skippedNoEmail });
+      toast({ title: `Scheduler run complete — ${d.sent} sent, ${d.errors} errors, ${d.skippedNoEmail} skipped (no email)` });
+    },
+    onError: () => toast({ title: "Scheduler run failed", variant: "destructive" }),
+  });
+
+  const hourLabel = (h: number) => {
+    if (h === 0) return "12:00 AM (midnight)";
+    if (h < 12)  return `${h}:00 AM`;
+    if (h === 12) return "12:00 PM (noon)";
+    return `${h - 12}:00 PM`;
+  };
+  const ordinal = (n: number) => {
+    const s = ["th","st","nd","rd"];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
+  };
 
   const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE_SA) });
   if (dateFrom)        params.set("dateFrom", dateFrom);
@@ -2707,6 +2771,133 @@ function StatementActivityTab() {
 
   return (
     <div className="space-y-5 mt-4">
+
+      {/* Monthly Statement Scheduler card — SUPER_ADMIN only (hidden if 403) */}
+      {!schedErr && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setSchedOpen(o => !o)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg p-1.5 bg-violet-50 text-violet-600"><Settings className="h-4 w-4" /></div>
+              <div className="text-left">
+                <p className="text-sm font-semibold">Monthly Statement Scheduler</p>
+                <p className="text-xs text-muted-foreground">
+                  {schedData
+                    ? schedData.isEnabled
+                      ? `Active — sends on the ${ordinal(schedData.dayOfMonth)} at ${hourLabel(schedData.hour)}`
+                      : "Disabled — no automatic emails will be sent"
+                    : "Configure automatic monthly fee statement emails"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {schedData && (
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${schedData.isEnabled ? "bg-green-50 text-green-700" : "bg-muted text-muted-foreground"}`}>
+                  {schedData.isEnabled ? "Enabled" : "Disabled"}
+                </span>
+              )}
+              <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${schedOpen ? "rotate-90" : ""}`} />
+            </div>
+          </button>
+
+          {schedOpen && (
+            <div className="border-t border-border px-4 py-4 space-y-4">
+              {/* Enable/Disable toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Enable automatic emails</p>
+                  <p className="text-xs text-muted-foreground">On the configured day and hour, the system emails a PDF fee statement to every active student's parent.</p>
+                </div>
+                <Switch checked={schedEnabled} onCheckedChange={setSchedEnabled} />
+              </div>
+
+              {/* Day + Hour pickers */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Day of Month</label>
+                  <Select value={String(schedDay)} onValueChange={v => setSchedDay(Number(v))}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-52">
+                      {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                        <SelectItem key={d} value={String(d)}>{ordinal(d)} of each month</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Max 28 to work in all months.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Hour (server local time)</label>
+                  <Select value={String(schedHour)} onValueChange={v => setSchedHour(Number(v))}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-52">
+                      {Array.from({ length: 24 }, (_, i) => i).map(h => (
+                        <SelectItem key={h} value={String(h)}>{hourLabel(h)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Last run info */}
+              {schedData?.lastRunAt && (
+                <div className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                  <span><span className="font-medium text-foreground">Last run:</span> {new Date(schedData.lastRunAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span>
+                  <span><span className="font-medium text-green-700">{schedData.lastRunCount} sent</span></span>
+                  {schedData.lastRunErrors > 0 && <span className="text-red-600">{schedData.lastRunErrors} errors</span>}
+                </div>
+              )}
+
+              {/* Run result banner */}
+              {runResult && (
+                <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">
+                  <CheckCircle2 className="inline h-4 w-4 mr-1.5 -mt-0.5" />
+                  Run complete: <strong>{runResult.sent}</strong> statements sent
+                  {runResult.errors > 0 && <span className="text-red-600 ml-2">{runResult.errors} errors</span>}
+                  {runResult.skippedNoEmail > 0 && <span className="text-muted-foreground ml-2">{runResult.skippedNoEmail} skipped (no email on file)</span>}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => saveSched.mutate()}
+                  disabled={saveSched.isPending}
+                  className="gap-1.5"
+                >
+                  {saveSched.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  Save Settings
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { setRunResult(null); triggerSched.mutate(); }}
+                  disabled={triggerSched.isPending}
+                  className="gap-1.5"
+                >
+                  {triggerSched.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  {triggerSched.isPending ? "Sending…" : "Run Now"}
+                </Button>
+              </div>
+
+              {/* How it works */}
+              <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2.5 text-xs text-violet-700 space-y-1">
+                <p className="font-semibold text-violet-800">How it works</p>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>On the configured day and hour, the server automatically emails all active students' parents.</li>
+                  <li>Each email includes a branded A4 PDF with the full invoice and payment history.</li>
+                  <li>Students without a parent email on file are skipped (shown in the run summary).</li>
+                  <li>Every dispatch is logged in the Statement Activity table below.</li>
+                  <li>Configure SMTP on the Tenants page to ensure delivery.</li>
+                </ol>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

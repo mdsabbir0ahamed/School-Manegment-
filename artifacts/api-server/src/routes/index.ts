@@ -35,6 +35,7 @@ import parentFeeStatementRouter from "./parent/fee-statement.js";
 import parentPaymentRequestsRouter from "./parent/payment-requests.js";
 import healthAnalyticsRouter from "./finance/health-analytics.js";
 import statementActivityRouter from "./finance/statement-activity.js";
+import statementScheduleRouter from "./finance/statement-schedule.js";
 
 const router: IRouter = Router();
 
@@ -74,5 +75,6 @@ router.use(parentFeeStatementRouter);
 router.use(parentPaymentRequestsRouter);
 router.use(healthAnalyticsRouter);
 router.use(statementActivityRouter);
+router.use(statementScheduleRouter);
 
 export default router;
