@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { studentsTable, classesTable, parentStudentsTable } from "@workspace/db";
-import { eq, ilike, and, count, sql, inArray } from "drizzle-orm";
+import {
+  studentsTable, classesTable, parentStudentsTable,
+  invoicesTable, transactionsTable, feeTypesTable,
+} from "@workspace/db";
+import { eq, ilike, and, count, sql, inArray, asc } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import { requireAdmin } from "../../middlewares/requireRole.js";
 import { audit } from "../../lib/audit.js";
@@ -178,6 +181,84 @@ router.put("/students/:id", requireAuth, async (req: AuthRequest, res): Promise<
     metadata: updateFields as Record<string, unknown>,
   });
   res.json(await formatStudent(student));
+});
+
+// ── GET /students/:id/fee-ledger ──────────────────────────────────────────
+// Staff-facing read-only fee ledger for any student. PARENT role blocked.
+router.get("/students/:id/fee-ledger", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  if (req.userRole === "PARENT") { res.status(403).json({ error: "FORBIDDEN" }); return; }
+  const studentId = parseInt(String(req.params["id"]), 10);
+  if (isNaN(studentId)) { res.status(400).json({ error: "BAD_REQUEST" }); return; }
+
+  const [student] = await db
+    .select({
+      id: studentsTable.id, studentId: studentsTable.studentId,
+      firstName: studentsTable.firstName, lastName: studentsTable.lastName,
+      classId: studentsTable.classId, admissionDate: studentsTable.admissionDate,
+      parentName: studentsTable.parentName, parentEmail: studentsTable.parentEmail,
+    })
+    .from(studentsTable).where(eq(studentsTable.id, studentId)).limit(1);
+
+  if (!student) { res.status(404).json({ error: "STUDENT_NOT_FOUND" }); return; }
+
+  let className: string | null = null;
+  if (student.classId) {
+    const [cls] = await db.select({ name: classesTable.name, section: classesTable.section })
+      .from(classesTable).where(eq(classesTable.id, student.classId)).limit(1);
+    if (cls) className = cls.section ? `${cls.name} – ${cls.section}` : cls.name;
+  }
+
+  const [invoices, feeTypes, transactions] = await Promise.all([
+    db.select().from(invoicesTable).where(eq(invoicesTable.studentId, studentId)).orderBy(asc(invoicesTable.dueDate)),
+    db.select({ id: feeTypesTable.id, name: feeTypesTable.name }).from(feeTypesTable),
+    db.select().from(transactionsTable).where(eq(transactionsTable.studentId, studentId)).orderBy(asc(transactionsTable.paidAt)),
+  ]);
+
+  const feeTypeMap = new Map(feeTypes.map(f => [f.id, f.name]));
+  const txByInvoice = new Map<number, typeof transactions>();
+  for (const tx of transactions) {
+    const list = txByInvoice.get(tx.invoiceId) ?? [];
+    list.push(tx);
+    txByInvoice.set(tx.invoiceId, list);
+  }
+
+  const formattedInvoices = invoices.map(inv => ({
+    id: inv.id,
+    invoiceNumber: inv.invoiceNumber,
+    feeTypeId: inv.feeTypeId,
+    feeTypeName: feeTypeMap.get(inv.feeTypeId) ?? "Unknown",
+    month: inv.month,
+    totalAmount: parseFloat(inv.totalAmount),
+    paidAmount: parseFloat(inv.paidAmount ?? "0"),
+    dueDate: inv.dueDate,
+    status: inv.status,
+    escalationLevel: inv.escalationLevel,
+    createdAt: inv.createdAt.toISOString(),
+    transactions: (txByInvoice.get(inv.id) ?? []).map(tx => ({
+      id: tx.id,
+      amountPaid: parseFloat(tx.amountPaid),
+      method: tx.method,
+      transactionId: tx.transactionId,
+      paidAt: tx.paidAt.toISOString(),
+    })),
+  }));
+
+  const totalInvoiced = formattedInvoices.reduce((s, i) => s + i.totalAmount, 0);
+  const totalPaid = formattedInvoices.reduce((s, i) => s + i.paidAmount, 0);
+  const totalOutstanding = formattedInvoices.reduce((s, i) => s + Math.max(0, i.totalAmount - i.paidAmount), 0);
+  const overdueCount = formattedInvoices.filter(i => i.status === "OVERDUE").length;
+
+  res.json({
+    student: {
+      id: student.id, studentId: student.studentId,
+      firstName: student.firstName, lastName: student.lastName,
+      className, admissionDate: student.admissionDate,
+      parentName: student.parentName, parentEmail: student.parentEmail,
+    },
+    summary: { totalInvoiced, totalPaid, totalOutstanding, overdueCount, invoiceCount: formattedInvoices.length },
+    invoices: formattedInvoices,
+    generatedAt: new Date().toISOString(),
+  });
 });
 
 router.delete("/students/:id", requireAuth, requireAdmin, async (req: AuthRequest, res): Promise<void> => {

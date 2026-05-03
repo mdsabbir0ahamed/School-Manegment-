@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 import {
   useListStudents, useCreateStudent, useUpdateStudent, useDeleteStudent,
   useListClasses, getListStudentsQueryKey,
@@ -22,7 +24,12 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { customFetch } from "@workspace/api-client-react";
-import { Search, Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight, Eye, Lock, Upload, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import {
+  Search, Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight,
+  Eye, Lock, Upload, CheckCircle2, XCircle, AlertCircle,
+  ChevronDown, ChevronUp, Clock, FileText,
+} from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const CSV_TEMPLATE = `first_name,last_name,gender,date_of_birth,parent_name,parent_phone,parent_email,address
 Ahmed,Khan,MALE,2010-05-15,Mohammad Khan,01711234567,parent@example.com,Dhaka
@@ -320,34 +327,237 @@ function StudentFormDialog({
   );
 }
 
+// ── Fee Ledger types ────────────────────────────────────────────────────────
+interface LedgerTransaction { id: number; amountPaid: number; method: string; transactionId: string | null; paidAt: string; }
+interface LedgerInvoice {
+  id: number; invoiceNumber: string; feeTypeName: string;
+  month: string | null; totalAmount: number; paidAmount: number;
+  dueDate: string; status: string; escalationLevel: string;
+  transactions: LedgerTransaction[];
+}
+interface FeeLedger {
+  student: { id: number; studentId: string; firstName: string; lastName: string; className: string | null; };
+  summary: { totalInvoiced: number; totalPaid: number; totalOutstanding: number; overdueCount: number; invoiceCount: number; };
+  invoices: LedgerInvoice[];
+}
+
+const LEDGER_STATUS: Record<string, { label: string; cls: string }> = {
+  PAID:      { label: "Paid",      cls: "bg-green-100 text-green-700" },
+  PENDING:   { label: "Pending",   cls: "bg-yellow-100 text-yellow-700" },
+  OVERDUE:   { label: "Overdue",   cls: "bg-red-100 text-red-700" },
+  CANCELLED: { label: "Cancelled", cls: "bg-gray-100 text-gray-500" },
+};
+
+function LedgerInvoiceRow({ inv }: { inv: LedgerInvoice }) {
+  const [expanded, setExpanded] = useState(false);
+  const s = LEDGER_STATUS[inv.status] ?? LEDGER_STATUS["PENDING"]!;
+  const due = Math.max(0, inv.totalAmount - inv.paidAmount);
+  const hasTx = inv.transactions.length > 0;
+
+  return (
+    <>
+      <tr
+        className={cn("border-b border-border transition-colors", hasTx ? "cursor-pointer hover:bg-muted/20" : "")}
+        onClick={() => hasTx && setExpanded(v => !v)}
+      >
+        <td className="px-3 py-2.5">
+          <div className="flex items-center gap-1">
+            <span className="font-mono text-xs font-medium">{inv.invoiceNumber}</span>
+            {hasTx && (expanded
+              ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
+              : <ChevronDown className="h-3 w-3 text-muted-foreground" />)}
+          </div>
+        </td>
+        <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv.feeTypeName}</td>
+        <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv.month ?? "—"}</td>
+        <td className="px-3 py-2.5 text-xs tabular-nums">৳{inv.totalAmount.toLocaleString()}</td>
+        <td className="px-3 py-2.5 text-xs tabular-nums text-green-600 font-medium">৳{inv.paidAmount.toLocaleString()}</td>
+        <td className="px-3 py-2.5 text-xs tabular-nums">
+          {due > 0 && inv.status !== "CANCELLED"
+            ? <span className="text-red-600 font-medium">৳{due.toLocaleString()}</span>
+            : <span className="text-muted-foreground">—</span>}
+        </td>
+        <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv.dueDate}</td>
+        <td className="px-3 py-2.5">
+          <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold", s.cls)}>
+            {s.label}
+          </span>
+        </td>
+      </tr>
+      {expanded && hasTx && (
+        <tr>
+          <td colSpan={8} className="bg-indigo-50/40 px-3 pb-3 pt-0">
+            <div className="ml-6 border border-indigo-100 rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-indigo-100/60 text-indigo-700">
+                    <th className="px-3 py-1.5 text-left font-semibold">Date</th>
+                    <th className="px-3 py-1.5 text-left font-semibold">Amount</th>
+                    <th className="px-3 py-1.5 text-left font-semibold">Method</th>
+                    <th className="px-3 py-1.5 text-left font-semibold">Reference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inv.transactions.map(tx => (
+                    <tr key={tx.id} className="border-t border-indigo-100 bg-white">
+                      <td className="px-3 py-1.5 text-muted-foreground">
+                        {new Date(tx.paidAt).toLocaleDateString("en-US", { dateStyle: "medium" })}
+                      </td>
+                      <td className="px-3 py-1.5 font-semibold text-green-700 tabular-nums">
+                        ৳{tx.amountPaid.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-1.5 text-muted-foreground">{tx.method.replace(/_/g, " ")}</td>
+                      <td className="px-3 py-1.5 font-mono text-muted-foreground">{tx.transactionId ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function FeeLedgerTab({ studentId }: { studentId: number }) {
+  const [yearFilter, setYearFilter] = useState("all");
+  const { data, isLoading, isError } = useQuery<FeeLedger>({
+    queryKey: ["student-fee-ledger", studentId],
+    queryFn: () => customFetch(`/api/students/${studentId}/fee-ledger`),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="space-y-2 pt-2">
+      {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+    </div>
+  );
+  if (isError || !data) return (
+    <p className="text-sm text-muted-foreground text-center pt-8">Could not load fee ledger.</p>
+  );
+
+  const { summary, invoices } = data;
+  const years = [...new Set(invoices.map(i => i.dueDate.slice(0, 4)))].sort().reverse();
+  const filtered = yearFilter === "all" ? invoices : invoices.filter(i => i.dueDate.startsWith(yearFilter));
+
+  return (
+    <div className="space-y-4 pt-2">
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "Total Invoiced", value: `৳${summary.totalInvoiced.toLocaleString()}`, sub: `${summary.invoiceCount} invoice${summary.invoiceCount !== 1 ? "s" : ""}`, cls: "text-foreground" },
+          { label: "Total Paid",     value: `৳${summary.totalPaid.toLocaleString()}`,     sub: "across all payments",                                                      cls: "text-green-600" },
+          { label: "Outstanding",    value: `৳${summary.totalOutstanding.toLocaleString()}`, sub: summary.overdueCount > 0 ? `${summary.overdueCount} overdue` : "all current", cls: summary.totalOutstanding > 0 ? "text-red-600" : "text-green-600" },
+          { label: "Invoices",       value: String(summary.invoiceCount),                  sub: "total records",                                                             cls: "text-indigo-600" },
+        ].map(s => (
+          <div key={s.label} className="rounded-lg border bg-card p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{s.label}</p>
+            <p className={cn("text-base font-bold mt-0.5 tabular-nums", s.cls)}>{s.value}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Overdue alert */}
+      {summary.overdueCount > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          {summary.overdueCount} overdue invoice{summary.overdueCount > 1 ? "s" : ""} — requires follow-up
+        </div>
+      )}
+
+      {/* Year filter + table */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground font-medium">{filtered.length} invoice{filtered.length !== 1 ? "s" : ""} shown</p>
+          {years.length > 0 && (
+            <Select value={yearFilter} onValueChange={setYearFilter}>
+              <SelectTrigger className="h-7 w-28 text-xs">
+                <SelectValue placeholder="All years" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All years</SelectItem>
+                {years.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
+            <Clock className="h-8 w-8 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">No invoices for this period</p>
+          </div>
+        ) : (
+          <div className="rounded-lg border overflow-auto max-h-72">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+                <tr>
+                  {["Invoice #", "Fee Type", "Month", "Billed", "Paid", "Due", "Due Date", "Status"].map(h => (
+                    <th key={h} className="px-3 py-2 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(inv => <LedgerInvoiceRow key={inv.id} inv={inv} />)}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ViewDialog({ student, open, onClose }: { student: Student | null; open: boolean; onClose: () => void }) {
   if (!student) return null;
-  const fields = [
+  const profileFields = [
     ["Student ID", student.studentId],
     ["Full Name", `${student.firstName} ${student.lastName}`],
     ["Date of Birth", student.dateOfBirth ?? "-"],
     ["Gender", student.gender ?? "-"],
     ["Class", student.className ?? "-"],
+    ["Status", student.status],
+    ["Admission Date", student.admissionDate],
     ["Parent Name", student.parentName ?? "-"],
     ["Parent Phone", student.parentPhone ?? "-"],
     ["Parent Email", student.parentEmail ?? "-"],
-    ["Admission Date", student.admissionDate],
-    ["Status", student.status],
   ];
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{student.firstName} {student.lastName}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {student.firstName} {student.lastName}
+            <Badge variant="outline" className="text-xs font-normal">{student.studentId}</Badge>
+          </DialogTitle>
         </DialogHeader>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          {fields.map(([label, value]) => (
-            <div key={label}>
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">{label}</dt>
-              <dd className="font-medium mt-0.5">{value}</dd>
-            </div>
-          ))}
-        </dl>
+        <Tabs defaultValue="profile">
+          <TabsList className="mb-2">
+            <TabsTrigger value="profile" className="gap-1.5 text-xs">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Profile
+            </TabsTrigger>
+            <TabsTrigger value="ledger" className="gap-1.5 text-xs">
+              <FileText className="h-3.5 w-3.5" /> Fee Ledger
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="profile">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm pt-2">
+              {profileFields.map(([label, value]) => (
+                <div key={label}>
+                  <dt className="text-xs text-muted-foreground uppercase tracking-wider">{label}</dt>
+                  <dd className="font-medium mt-0.5">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </TabsContent>
+
+          <TabsContent value="ledger">
+            <FeeLedgerTab studentId={student.id} />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );
