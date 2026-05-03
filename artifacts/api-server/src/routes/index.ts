@@ -38,6 +38,7 @@ import statementActivityRouter from "./finance/statement-activity.js";
 import statementScheduleRouter from "./finance/statement-schedule.js";
 import studentRouter from "./student/index.js";
 import studentNotesRouter from "./student-notes/index.js";
+import studentIncidentsRouter from "./student-incidents/index.js";
 
 const router: IRouter = Router();
 
@@ -80,5 +81,6 @@ router.use(statementActivityRouter);
 router.use(statementScheduleRouter);
 router.use(studentRouter);
 router.use(studentNotesRouter);
+router.use(studentIncidentsRouter);
 
 export default router;

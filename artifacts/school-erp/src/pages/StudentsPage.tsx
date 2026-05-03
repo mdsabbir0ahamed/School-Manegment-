@@ -27,7 +27,8 @@ import {
   Search, Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight,
   Eye, Lock, Upload, CheckCircle2, XCircle, AlertCircle,
   ChevronDown, ChevronUp, Clock, FileText, CreditCard, Download,
-  MessageSquare, Send, Trash,
+  MessageSquare, Send, Trash, ShieldAlert, ShieldCheck, ShieldOff,
+  ChevronRight as ChevronR,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -756,6 +757,241 @@ function StatementHistoryTab({ studentId }: { studentId: number }) {
   );
 }
 
+// ── Student Incidents Tab ───────────────────────────────────────────────────
+
+type IncidentSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+type IncidentStatus   = "OPEN" | "RESOLVED" | "DISMISSED";
+
+interface StudentIncident {
+  id: number; studentId: number; reportedByUserId: number; reportedByName: string;
+  title: string; description: string; severity: IncidentSeverity;
+  actionTaken: string | null; status: IncidentStatus;
+  resolvedAt: string | null; createdAt: string; updatedAt: string;
+}
+
+const SEVERITY_META: Record<IncidentSeverity, { label: string; cls: string }> = {
+  LOW:      { label: "Low",      cls: "bg-blue-100 text-blue-700" },
+  MEDIUM:   { label: "Medium",  cls: "bg-yellow-100 text-yellow-700" },
+  HIGH:     { label: "High",    cls: "bg-orange-100 text-orange-700" },
+  CRITICAL: { label: "Critical", cls: "bg-red-100 text-red-700" },
+};
+const STATUS_META: Record<IncidentStatus, { label: string; cls: string }> = {
+  OPEN:      { label: "Open",      cls: "bg-orange-100 text-orange-700" },
+  RESOLVED:  { label: "Resolved",  cls: "bg-green-100 text-green-700" },
+  DISMISSED: { label: "Dismissed", cls: "bg-gray-100 text-gray-500" },
+};
+
+function StudentIncidentsTab({ studentId }: { studentId: number }) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [showForm, setShowForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [form, setForm] = useState({ title: "", description: "", severity: "LOW" as IncidentSeverity, actionTaken: "" });
+
+  const canWrite = user?.role === "SUPER_ADMIN" || user?.role === "TEACHER";
+  const isAdmin  = user?.role === "SUPER_ADMIN";
+
+  const { data, isLoading, refetch } = useQuery<{ incidents: StudentIncident[] }>({
+    queryKey: ["student-incidents", studentId],
+    queryFn: () => customFetch(`/api/student-incidents?studentId=${studentId}`),
+  });
+
+  const handleCreate = async () => {
+    if (!form.title.trim() || !form.description.trim()) {
+      toast({ title: "Title and description are required", variant: "destructive" }); return;
+    }
+    setSubmitting(true);
+    try {
+      await customFetch("/api/student-incidents", {
+        method: "POST",
+        body: JSON.stringify({ studentId, ...form, actionTaken: form.actionTaken.trim() || undefined }),
+      });
+      toast({ title: "Incident logged" });
+      setShowForm(false);
+      setForm({ title: "", description: "", severity: "LOW", actionTaken: "" });
+      refetch();
+    } catch { toast({ title: "Failed to log incident", variant: "destructive" }); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleStatus = async (id: number, status: IncidentStatus) => {
+    setUpdatingId(id);
+    try {
+      await customFetch(`/api/student-incidents/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      toast({ title: `Incident marked ${status.toLowerCase()}` });
+      refetch();
+    } catch { toast({ title: "Failed to update status", variant: "destructive" }); }
+    finally { setUpdatingId(null); }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Permanently delete this incident record?")) return;
+    setDeletingId(id);
+    try {
+      await customFetch(`/api/student-incidents/${id}`, { method: "DELETE" });
+      toast({ title: "Incident deleted" }); refetch();
+    } catch (err: any) {
+      toast({ title: err?.data?.message ?? "Failed to delete", variant: "destructive" });
+    } finally { setDeletingId(null); }
+  };
+
+  const openCount = data?.incidents.filter(i => i.status === "OPEN").length ?? 0;
+
+  return (
+    <div className="space-y-3 pt-1">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-muted-foreground">
+            {data?.incidents.length ?? 0} incident{data?.incidents.length !== 1 ? "s" : ""} on record
+          </p>
+          {openCount > 0 && (
+            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700">
+              {openCount} open
+            </span>
+          )}
+        </div>
+        {canWrite && (
+          <Button size="sm" variant={showForm ? "outline" : "default"} className="h-7 text-xs"
+            onClick={() => setShowForm(v => !v)}>
+            {showForm ? "Cancel" : <><Plus className="h-3 w-3 mr-1" /> Log Incident</>}
+          </Button>
+        )}
+      </div>
+
+      {/* Log form */}
+      {showForm && (
+        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2.5">
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Title *</label>
+            <input className="w-full h-8 rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              placeholder="Brief incident title…" value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium">Severity</label>
+              <select className="w-full h-8 rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                value={form.severity} onChange={e => setForm(f => ({ ...f, severity: e.target.value as IncidentSeverity }))}>
+                {(["LOW", "MEDIUM", "HIGH", "CRITICAL"] as IncidentSeverity[]).map(s => (
+                  <option key={s} value={s}>{SEVERITY_META[s].label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium">Action Taken</label>
+              <input className="w-full h-8 rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder="Optional…" value={form.actionTaken}
+                onChange={e => setForm(f => ({ ...f, actionTaken: e.target.value }))} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Description *</label>
+            <Textarea placeholder="Describe what happened…" className="text-xs resize-none min-h-[70px]"
+              value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={handleCreate} disabled={submitting} className="h-7 text-xs">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <ShieldAlert className="h-3.5 w-3.5 mr-1" />}
+              Log Incident
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Incidents list */}
+      {isLoading ? (
+        <div className="space-y-2"><Skeleton className="h-14" /><Skeleton className="h-14" /></div>
+      ) : !data?.incidents.length ? (
+        <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
+          <ShieldCheck className="h-6 w-6 mx-auto mb-2 opacity-30" />
+          No incidents on record
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+          {data.incidents.map(inc => {
+            const sev = SEVERITY_META[inc.severity];
+            const sta = STATUS_META[inc.status];
+            const isOwner = inc.reportedByUserId === user?.id;
+            const canUpdate = isAdmin || isOwner;
+            const expanded = expandedId === inc.id;
+            return (
+              <div key={inc.id} className={cn("rounded-lg border bg-card transition-colors", inc.status === "OPEN" ? "border-orange-200" : "border-border")}>
+                <div className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer" onClick={() => setExpandedId(expanded ? null : inc.id)}>
+                  <div className="mt-0.5 shrink-0">
+                    {inc.status === "RESOLVED"  ? <ShieldCheck className="h-4 w-4 text-green-600" />
+                     : inc.status === "DISMISSED" ? <ShieldOff className="h-4 w-4 text-gray-400" />
+                     : <ShieldAlert className={cn("h-4 w-4", inc.severity === "CRITICAL" ? "text-red-600" : inc.severity === "HIGH" ? "text-orange-500" : "text-yellow-500")} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-medium truncate">{inc.title}</span>
+                      <span className={cn("inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0", sev.cls)}>{sev.label}</span>
+                      <span className={cn("inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0", sta.cls)}>{sta.label}</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {inc.reportedByName} · {new Date(inc.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                    </p>
+                  </div>
+                  <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5 transition-transform", expanded && "rotate-180")} />
+                </div>
+
+                {expanded && (
+                  <div className="border-t border-border px-3 pb-3 pt-2 space-y-2">
+                    <p className="text-xs text-foreground leading-relaxed">{inc.description}</p>
+                    {inc.actionTaken && (
+                      <div className="rounded bg-muted px-2.5 py-1.5">
+                        <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-0.5">Action Taken</p>
+                        <p className="text-xs">{inc.actionTaken}</p>
+                      </div>
+                    )}
+                    {inc.resolvedAt && (
+                      <p className="text-[10px] text-muted-foreground">
+                        {inc.status === "RESOLVED" ? "Resolved" : "Dismissed"} on {new Date(inc.resolvedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      </p>
+                    )}
+                    {(canUpdate || isAdmin) && (
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        {canUpdate && inc.status === "OPEN" && (
+                          <>
+                            <button onClick={() => handleStatus(inc.id, "RESOLVED")} disabled={updatingId === inc.id}
+                              className="inline-flex items-center gap-1 h-6 px-2 rounded text-[10px] font-medium bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-50">
+                              {updatingId === inc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />} Resolve
+                            </button>
+                            <button onClick={() => handleStatus(inc.id, "DISMISSED")} disabled={updatingId === inc.id}
+                              className="inline-flex items-center gap-1 h-6 px-2 rounded text-[10px] font-medium bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-50">
+                              {updatingId === inc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldOff className="h-3 w-3" />} Dismiss
+                            </button>
+                          </>
+                        )}
+                        {canUpdate && inc.status !== "OPEN" && (
+                          <button onClick={() => handleStatus(inc.id, "OPEN")} disabled={updatingId === inc.id}
+                            className="inline-flex items-center gap-1 h-6 px-2 rounded text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 disabled:opacity-50">
+                            {updatingId === inc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldAlert className="h-3 w-3" />} Reopen
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button onClick={() => handleDelete(inc.id)} disabled={deletingId === inc.id}
+                            className="inline-flex items-center gap-1 h-6 px-2 rounded text-[10px] font-medium bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-50 ml-auto">
+                            {deletingId === inc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash className="h-3 w-3" />} Delete
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface StudentNote {
   id: number; studentId: number; authorUserId: number; authorName: string;
   note: string; createdAt: string; updatedAt: string;
@@ -997,6 +1233,11 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
                 <MessageSquare className="h-3.5 w-3.5" /> Notes
               </TabsTrigger>
             )}
+            {canNotes && (
+              <TabsTrigger value="incidents" className="gap-1.5 text-xs">
+                <ShieldAlert className="h-3.5 w-3.5" /> Incidents
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="profile">
@@ -1023,6 +1264,11 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
           {canNotes && (
             <TabsContent value="notes">
               <StudentNotesTab studentId={student.id} />
+            </TabsContent>
+          )}
+          {canNotes && (
+            <TabsContent value="incidents">
+              <StudentIncidentsTab studentId={student.id} />
             </TabsContent>
           )}
         </Tabs>
