@@ -4061,6 +4061,118 @@ function PaymentRequestsTab() {
   );
 }
 
+// ── Batch Payment Dialog ────────────────────────────────────────────────────
+
+function BatchPaymentDialog({
+  invoices, open, onClose,
+}: { invoices: Invoice[]; open: boolean; onClose: (cleared: boolean) => void }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [method, setMethod] = useState("CASH");
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().split("T")[0]!);
+  const [transactionId, setTransactionId] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const payable = invoices.filter(
+    i => i.status !== "PAID" && i.status !== "CANCELLED" && (i.totalAmount - i.paidAmount) > 0,
+  );
+  const totalOutstanding = payable.reduce((s, i) => s + (i.totalAmount - i.paidAmount), 0);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      customFetch<{ processed: number; totalAmount: number }>("/api/transactions/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceIds: payable.map(i => i.id),
+          method,
+          paidAt,
+          transactionId: transactionId || undefined,
+          notes: notes || undefined,
+        }),
+      }),
+    onSuccess: data => {
+      qc.invalidateQueries({ queryKey: getListInvoicesQueryKey() });
+      qc.invalidateQueries({ queryKey: getListTransactionsQueryKey() });
+      toast({
+        title: `${data.processed} payment${data.processed !== 1 ? "s" : ""} recorded`,
+        description: `৳${data.totalAmount.toLocaleString()} via ${method.replace(/_/g, " ")}`,
+      });
+      onClose(true);
+    },
+    onError: () => toast({ title: "Batch payment failed", variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={() => onClose(false)}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ListChecks className="h-4 w-4" /> Batch Payment
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground">
+            {payable.length} invoice{payable.length !== 1 ? "s" : ""} selected &mdash; total outstanding:{" "}
+            <span className="font-semibold text-foreground">৳{totalOutstanding.toLocaleString()}</span>
+          </p>
+        </DialogHeader>
+
+        <div className="max-h-44 overflow-auto rounded-lg border divide-y text-xs">
+          {payable.length === 0 ? (
+            <p className="px-3 py-4 text-center text-muted-foreground">No payable invoices in selection</p>
+          ) : payable.map(inv => (
+            <div key={inv.id} className="flex items-center justify-between px-3 py-2">
+              <div className="min-w-0">
+                <span className="font-mono font-medium">{inv.invoiceNumber}</span>
+                <span className="text-muted-foreground ml-2 truncate">{inv.studentName}</span>
+                {inv.month && <span className="text-muted-foreground ml-1">· {inv.month}</span>}
+              </div>
+              <span className="ml-3 tabular-nums font-semibold text-red-600 shrink-0">
+                ৳{(inv.totalAmount - inv.paidAmount).toLocaleString()}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label>Payment Method *</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {["CASH", "BANK_TRANSFER", "MOBILE_BANKING", "CHEQUE"].map(m => (
+                  <SelectItem key={m} value={m}>{m.replace(/_/g, " ")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Payment Date *</Label>
+            <Input type="date" value={paidAt} onChange={e => setPaidAt(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Batch Reference ID</Label>
+              <Input value={transactionId} onChange={e => setTransactionId(e.target.value)} placeholder="Optional" />
+            </div>
+            <div className="space-y-1">
+              <Label>Notes</Label>
+              <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onClose(false)}>Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={payable.length === 0 || mutation.isPending}>
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Record {payable.length} Payment{payable.length !== 1 ? "s" : ""}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────
 
 export default function FinancePage() {
@@ -4072,6 +4184,8 @@ export default function FinancePage() {
   const [page, setPage] = useState(0);
   const [remindingId, setRemindingId] = useState<number | null>(null);
   const [remindedIds, setRemindedIds] = useState<Set<number>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchPayOpen, setBatchPayOpen] = useState(false);
   const { toast } = useToast();
 
   const sendReminder = async (invoiceId: number) => {
@@ -4090,9 +4204,25 @@ export default function FinancePage() {
     }
   };
 
+  const toggleSelect = (id: number) =>
+    setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const toggleSelectAll = () => {
+    const payable = (invoicesData?.invoices ?? []).filter(i => i.status !== "PAID" && i.status !== "CANCELLED");
+    const allSelected = payable.length > 0 && payable.every(i => selectedIds.has(i.id));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) payable.forEach(i => next.delete(i.id));
+      else payable.forEach(i => next.add(i.id));
+      return next;
+    });
+  };
+
   const params = { status: statusFilter as any || undefined, limit: PAGE_SIZE, offset: page * PAGE_SIZE };
   const { data: invoicesData, isLoading } = useListInvoices(params);
   const { data: transactionsData } = useListTransactions({ limit: 20 });
+
+  const selectedInvoices = (invoicesData?.invoices ?? []).filter(i => selectedIds.has(i.id));
 
   const totalRevenue = transactionsData?.transactions.reduce((s, t) => s + t.amountPaid, 0) ?? 0;
   const pendingTotal = invoicesData?.invoices
@@ -4185,6 +4315,21 @@ export default function FinancePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
+                  <th className="px-3 py-2.5 w-10">
+                    {(() => {
+                      const payable = (invoicesData?.invoices ?? []).filter(i => i.status !== "PAID" && i.status !== "CANCELLED");
+                      const allChecked = payable.length > 0 && payable.every(i => selectedIds.has(i.id));
+                      return (
+                        <input
+                          type="checkbox"
+                          checked={allChecked}
+                          onChange={toggleSelectAll}
+                          className="h-3.5 w-3.5 rounded border-input accent-primary cursor-pointer"
+                          title={allChecked ? "Deselect all" : "Select all unpaid"}
+                        />
+                      );
+                    })()}
+                  </th>
                   {["Invoice No.", "Student", "Fee Type", "Month", "Total", "Paid", "Due Date", "Status", "Action"].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
@@ -4193,14 +4338,24 @@ export default function FinancePage() {
               <tbody className="divide-y divide-border">
                 {isLoading ? (
                   Array.from({ length: 6 }).map((_, i) => (
-                    <tr key={i}>{Array.from({ length: 9 }).map((_, j) => (
+                    <tr key={i}>{Array.from({ length: 10 }).map((_, j) => (
                       <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>
                     ))}</tr>
                   ))
                 ) : invoicesData?.invoices.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">No invoices found</td></tr>
+                  <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">No invoices found</td></tr>
                 ) : invoicesData?.invoices.map(inv => (
-                  <tr key={inv.id} className="hover:bg-muted/20 transition-colors">
+                  <tr key={inv.id} className={cn("hover:bg-muted/20 transition-colors", selectedIds.has(inv.id) && "bg-primary/5")}>
+                    <td className="px-3 py-3">
+                      {inv.status !== "PAID" && inv.status !== "CANCELLED" ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(inv.id)}
+                          onChange={() => toggleSelect(inv.id)}
+                          className="h-3.5 w-3.5 rounded border-input accent-primary cursor-pointer"
+                        />
+                      ) : <span className="block w-3.5" />}
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs">{inv.invoiceNumber}</td>
                     <td className="px-4 py-3 font-medium">{inv.studentName}</td>
                     <td className="px-4 py-3 text-muted-foreground">{inv.feeTypeName}</td>
@@ -4247,6 +4402,31 @@ export default function FinancePage() {
               </tbody>
             </table>
           </div>
+
+          {/* Batch pay floating bar */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-primary">
+                  {selectedIds.size} invoice{selectedIds.size !== 1 ? "s" : ""} selected
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  ৳{selectedInvoices
+                    .filter(i => i.status !== "PAID" && i.status !== "CANCELLED")
+                    .reduce((s, i) => s + (i.totalAmount - i.paidAmount), 0)
+                    .toLocaleString()} outstanding
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setSelectedIds(new Set())}>
+                  Clear
+                </Button>
+                <Button size="sm" className="h-7 text-xs gap-1.5" onClick={() => setBatchPayOpen(true)}>
+                  <ListChecks className="h-3.5 w-3.5" /> Batch Pay
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Pagination */}
           {(invoicesData?.total ?? 0) > PAGE_SIZE && (
@@ -4346,6 +4526,11 @@ export default function FinancePage() {
 
       <CreateInvoiceDialog open={invoiceDialogOpen} onClose={() => setInvoiceDialogOpen(false)} />
       <RecordPaymentDialog invoice={paymentInvoice} open={!!paymentInvoice} onClose={() => setPaymentInvoice(null)} />
+      <BatchPaymentDialog
+        invoices={selectedInvoices}
+        open={batchPayOpen}
+        onClose={cleared => { setBatchPayOpen(false); if (cleared) setSelectedIds(new Set()); }}
+      />
       <ExportPdfDialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} />
       <BulkGenerateDialog open={bulkDialogOpen} onClose={() => setBulkDialogOpen(false)} />
     </div>

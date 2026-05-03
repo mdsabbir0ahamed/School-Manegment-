@@ -183,6 +183,57 @@ router.post("/transactions", requireAuth, requireFinance, async (req: AuthReques
   });
 });
 
+// ── Bulk Payment (pay multiple invoices in one shot) ──────────────────────
+
+router.post("/transactions/bulk", requireAuth, requireFinance, async (req: AuthRequest, res): Promise<void> => {
+  const { invoiceIds, method, paidAt, notes, transactionId } = req.body as {
+    invoiceIds?: number[]; method?: string; paidAt?: string; notes?: string; transactionId?: string;
+  };
+
+  if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+    res.status(400).json({ error: "invoiceIds must be a non-empty array" }); return;
+  }
+  const validMethods = ["CASH", "BANK_TRANSFER", "MOBILE_BANKING", "CHEQUE"];
+  if (!validMethods.includes(method ?? "")) {
+    res.status(400).json({ error: "Invalid method" }); return;
+  }
+
+  const invoices = await db.select().from(invoicesTable).where(inArray(invoicesTable.id, invoiceIds));
+  if (invoices.length === 0) { res.status(404).json({ error: "No invoices found" }); return; }
+
+  const payAt = paidAt ? new Date(paidAt) : new Date();
+  const results: { invoiceId: number; invoiceNumber: string; amountPaid: number; newStatus: string }[] = [];
+  let totalAmount = 0;
+
+  for (const invoice of invoices) {
+    const outstanding = parseFloat(invoice.totalAmount) - parseFloat(invoice.paidAmount);
+    if (outstanding <= 0 || invoice.status === "PAID" || invoice.status === "CANCELLED") continue;
+
+    await db.insert(transactionsTable).values({
+      invoiceId: invoice.id, studentId: invoice.studentId,
+      amountPaid: String(outstanding), method: method as "CASH" | "BANK_TRANSFER" | "MOBILE_BANKING" | "CHEQUE",
+      transactionId: transactionId ?? null, notes: notes ?? null,
+      paidAt: payAt,
+    });
+
+    await db.update(invoicesTable)
+      .set({ paidAmount: invoice.totalAmount, status: "PAID", updatedAt: new Date() })
+      .where(eq(invoicesTable.id, invoice.id));
+
+    results.push({ invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, amountPaid: outstanding, newStatus: "PAID" });
+    totalAmount += outstanding;
+  }
+
+  await audit({
+    userId: req.userId, userEmail: req.userEmail, userRole: req.userRole,
+    action: "BULK_PAYMENT", entity: "transaction", entityId: invoiceIds[0] ?? 0,
+    description: `Bulk payment: ${results.length} invoice${results.length !== 1 ? "s" : ""}, total ৳${totalAmount.toFixed(2)} via ${method}`,
+    metadata: { processed: results.length, totalAmount, method, invoiceIds },
+  });
+
+  res.status(201).json({ processed: results.length, totalAmount, results });
+});
+
 // ── Bulk Invoice Generation ────────────────────────────────────────────────
 
 router.post("/invoices/bulk-generate", requireAuth, requireFinance, async (req: AuthRequest, res): Promise<void> => {
