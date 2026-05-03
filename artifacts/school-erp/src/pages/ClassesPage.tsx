@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, GraduationCap, Users, Loader2, Lock, Megaphone, Trash2 } from "lucide-react";
+import { Plus, Pencil, GraduationCap, Users, Loader2, Lock, Megaphone, Trash2, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Announcement Types ───────────────────────────────────────────────────────
@@ -316,6 +316,218 @@ function HomeworkDialog({ cls, open, onClose }: { cls: Class; open: boolean; onC
   );
 }
 
+// ── Exam Schedule Types ───────────────────────────────────────────────────────
+interface ExamItem {
+  id: number; classId: number; subjectId: number | null; subjectName: string | null;
+  authorName: string; title: string; examType: string; examDate: string;
+  startTime: string | null; endTime: string | null; room: string | null; notes: string | null;
+  createdAt: string;
+}
+
+const EXAM_TYPES = [
+  { value: "MIDTERM",    label: "Midterm"    },
+  { value: "FINAL",      label: "Final"      },
+  { value: "UNIT_TEST",  label: "Unit Test"  },
+  { value: "QUIZ",       label: "Quiz"       },
+  { value: "ASSIGNMENT", label: "Assignment" },
+  { value: "PRACTICAL",  label: "Practical"  },
+];
+
+const EXAM_TYPE_COLORS: Record<string, string> = {
+  FINAL:      "bg-red-100 text-red-700",
+  MIDTERM:    "bg-orange-100 text-orange-700",
+  UNIT_TEST:  "bg-amber-100 text-amber-700",
+  QUIZ:       "bg-blue-100 text-blue-700",
+  ASSIGNMENT: "bg-purple-100 text-purple-700",
+  PRACTICAL:  "bg-green-100 text-green-700",
+};
+
+// ── Exam Schedule Dialog ──────────────────────────────────────────────────────
+function ExamScheduleDialog({ cls, open, onClose }: { cls: Class; open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const token = localStorage.getItem("erp_token") ?? "";
+
+  const [title,    setTitle]    = useState("");
+  const [examType, setExamType] = useState("UNIT_TEST");
+  const [examDate, setExamDate] = useState("");
+  const [startTime,setStartTime]= useState("");
+  const [endTime,  setEndTime]  = useState("");
+  const [room,     setRoom]     = useState("");
+  const [notes,    setNotes]    = useState("");
+  const [subjectId,setSubjectId]= useState<string>("");
+
+  const { data: subjectsData } = useQuery<{ subjects: { id: number; name: string; code: string }[] }>({
+    queryKey: ["subjects-for-class", cls.id],
+    queryFn: () => fetch(`/api/subjects?classId=${cls.id}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+    enabled: open,
+  });
+
+  const { data, isLoading } = useQuery<{ exams: ExamItem[] }>({
+    queryKey: ["exam-schedule", cls.id],
+    queryFn:  () => authedFetch(`/api/exam-schedule?classId=${cls.id}`),
+    enabled: open,
+  });
+
+  function resetForm() { setTitle(""); setExamType("UNIT_TEST"); setExamDate(""); setStartTime(""); setEndTime(""); setRoom(""); setNotes(""); setSubjectId(""); }
+
+  const postMut = useMutation({
+    mutationFn: () => authedFetch("/api/exam-schedule", {
+      method: "POST",
+      body: JSON.stringify({
+        classId: cls.id, title: title.trim(), examType, examDate,
+        startTime: startTime || null, endTime: endTime || null,
+        room: room || null, notes: notes || null,
+        subjectId: subjectId && subjectId !== "none" ? parseInt(subjectId, 10) : null,
+      }),
+    }),
+    onSuccess: () => {
+      toast({ title: "Exam scheduled", description: "Students and parents have been notified." });
+      resetForm();
+      qc.invalidateQueries({ queryKey: ["exam-schedule", cls.id] });
+    },
+    onError: () => toast({ title: "Failed to schedule exam", variant: "destructive" }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => fetch(`/api/exam-schedule/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }),
+    onSuccess: () => { toast({ title: "Exam removed" }); qc.invalidateQueries({ queryKey: ["exam-schedule", cls.id] }); },
+  });
+
+  const subjects = subjectsData?.subjects ?? [];
+  const today = new Date().toISOString().split("T")[0]!;
+
+  function daysUntil(dateStr: string) {
+    return Math.ceil((new Date(dateStr).getTime() - new Date(today).getTime()) / 86400000);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4 text-orange-500" /> Exam Schedule — {cls.name}
+            {cls.section && <Badge variant="outline" className="text-xs">{cls.section}</Badge>}
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Form */}
+        <div className="space-y-3 border rounded-lg p-4 bg-muted/30">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Schedule New Exam</p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Exam Type</Label>
+              <Select value={examType} onValueChange={setExamType}>
+                <SelectTrigger className="text-sm h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>{EXAM_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            {subjects.length > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Subject</Label>
+                <Select value={subjectId} onValueChange={setSubjectId}>
+                  <SelectTrigger className="text-sm h-8"><SelectValue placeholder="Any / General" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Any / General</SelectItem>
+                    {subjects.map(s => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Title / Name</Label>
+            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Chapter 3-5 Unit Test" className="text-sm" />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5 col-span-3 sm:col-span-1">
+              <Label className="text-xs">Date *</Label>
+              <Input type="date" value={examDate} onChange={e => setExamDate(e.target.value)} className="text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Start Time</Label>
+              <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">End Time</Label>
+              <Input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="text-sm" />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Room / Venue</Label>
+            <Input value={room} onChange={e => setRoom(e.target.value)} placeholder="e.g. Room 101, Exam Hall A" className="text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Notes (optional)</Label>
+            <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Syllabus, instructions…" rows={2} className="text-sm resize-none" />
+          </div>
+
+          <Button size="sm" className="w-full"
+            disabled={!title.trim() || !examDate || postMut.isPending}
+            onClick={() => postMut.mutate()}>
+            {postMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CalendarDays className="h-3.5 w-3.5 mr-1.5" />}
+            Schedule Exam
+          </Button>
+        </div>
+
+        {/* Existing exams */}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Scheduled Exams</p>
+          {isLoading ? (
+            <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-16 bg-muted animate-pulse rounded-lg" />)}</div>
+          ) : !data?.exams.length ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No exams scheduled yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {data.exams.map(ex => {
+                const diff = daysUntil(ex.examDate);
+                const isPast = diff < 0;
+                return (
+                  <div key={ex.id} className={`rounded-lg border border-border bg-card p-3 ${isPast ? "opacity-50" : ""}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${EXAM_TYPE_COLORS[ex.examType] ?? "bg-gray-100 text-gray-600"}`}>
+                            {EXAM_TYPES.find(t => t.value === ex.examType)?.label ?? ex.examType}
+                          </span>
+                          <p className="font-medium text-sm">{ex.title}</p>
+                        </div>
+                        {ex.subjectName && <p className="text-[10px] text-primary font-medium mt-0.5">{ex.subjectName}</p>}
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          {new Date(ex.examDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                          {ex.startTime && ` · ${ex.startTime}${ex.endTime ? ` – ${ex.endTime}` : ""}`}
+                          {ex.room && ` · ${ex.room}`}
+                        </p>
+                        {!isPast && diff <= 7 && (
+                          <p className={`text-[10px] font-semibold mt-0.5 ${diff === 0 ? "text-red-600" : diff <= 3 ? "text-amber-600" : "text-blue-600"}`}>
+                            {diff === 0 ? "Today!" : `In ${diff} day${diff !== 1 ? "s" : ""}`}
+                          </p>
+                        )}
+                      </div>
+                      <button className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                        onClick={() => deleteMut.mutate(ex.id)} disabled={deleteMut.isPending}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const classSchema = z.object({
   name: z.string().min(1, "Required"),
   section: z.string().optional(),
@@ -405,6 +617,7 @@ export default function ClassesPage() {
   const [editClass, setEditClass] = useState<Class | undefined>();
   const [announceClass, setAnnounceClass] = useState<Class | null>(null);
   const [homeworkClass, setHomeworkClass] = useState<Class | null>(null);
+  const [examClass, setExamClass] = useState<Class | null>(null);
   const { data, isLoading } = useListClasses();
   const perms = usePermissions();
   const { user } = useAuth();
@@ -492,6 +705,12 @@ export default function ClassesPage() {
                 >
                   <Megaphone className="h-3 w-3" /> Homework
                 </button>
+                <button
+                  onClick={() => setExamClass(cls)}
+                  className="flex items-center gap-1.5 text-[11px] text-orange-600 hover:text-orange-700 font-medium transition-colors"
+                >
+                  <CalendarDays className="h-3 w-3" /> Exams
+                </button>
               </div>
             </div>
           ))
@@ -508,6 +727,10 @@ export default function ClassesPage() {
 
       {homeworkClass && (
         <HomeworkDialog cls={homeworkClass} open={!!homeworkClass} onClose={() => setHomeworkClass(null)} />
+      )}
+
+      {examClass && (
+        <ExamScheduleDialog cls={examClass} open={!!examClass} onClose={() => setExamClass(null)} />
       )}
     </div>
   );

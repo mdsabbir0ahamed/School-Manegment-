@@ -14,7 +14,7 @@ import {
   Users, CalendarCheck, Banknote, AlertCircle, CheckCircle2,
   Clock, Link2, FileText, Download, Loader2, ChevronDown,
   ChevronUp, CreditCard, TrendingUp, Send, XCircle, HelpCircle, RefreshCw, History,
-  LayoutDashboard, CalendarClock, Wallet, Megaphone, BookMarked,
+  LayoutDashboard, CalendarClock, Wallet, Megaphone, BookMarked, CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -1036,8 +1036,87 @@ function ParentHomeworkCard({ studentId }: { studentId: number }) {
   );
 }
 
+interface ParentExamItem {
+  id: number; classId: number; subjectName: string | null; authorName: string;
+  title: string; examType: string; examDate: string;
+  startTime: string | null; endTime: string | null; room: string | null; notes: string | null;
+  studentName?: string | null;
+}
+
+const EXAM_TYPE_LABELS: Record<string, string> = {
+  FINAL: "Final", MIDTERM: "Midterm", UNIT_TEST: "Unit Test",
+  QUIZ: "Quiz", ASSIGNMENT: "Assignment", PRACTICAL: "Practical",
+};
+const EXAM_TYPE_COLORS: Record<string, string> = {
+  FINAL: "bg-red-100 text-red-700", MIDTERM: "bg-orange-100 text-orange-700",
+  UNIT_TEST: "bg-amber-100 text-amber-700", QUIZ: "bg-blue-100 text-blue-700",
+  ASSIGNMENT: "bg-purple-100 text-purple-700", PRACTICAL: "bg-green-100 text-green-700",
+};
+
+function ParentExamCard({ studentId }: { studentId: number }) {
+  const token = localStorage.getItem("erp_token") ?? "";
+  const [showAll, setShowAll] = useState(false);
+  const { data, isLoading } = useQuery<{ exams: ParentExamItem[] }>({
+    queryKey: ["parent-exams", studentId, showAll],
+    queryFn: () => fetch(`/api/parent/exam-schedule${showAll ? "?all=true" : ""}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+  });
+
+  const exams = data?.exams ?? [];
+  const today = new Date().toISOString().split("T")[0]!;
+
+  if (isLoading) return <div className="h-20 bg-muted animate-pulse rounded-xl" />;
+
+  return (
+    <div className="space-y-2.5">
+      {!exams.length ? (
+        <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
+          <CalendarDays className="h-6 w-6 mx-auto mb-2 opacity-30" />
+          {showAll ? "No exams scheduled" : "No upcoming exams"}
+        </div>
+      ) : (
+        exams.map(ex => {
+          const diff = Math.ceil((new Date(ex.examDate).getTime() - new Date(today).getTime()) / 86400000);
+          const isPast = diff < 0;
+          return (
+            <div key={ex.id} className={`rounded-xl border border-border bg-card p-3.5 ${isPast ? "opacity-60" : ""}`}>
+              <div className="flex items-start gap-2.5">
+                <div className="h-7 w-7 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <CalendarDays className="h-3.5 w-3.5 text-orange-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start gap-1.5 flex-wrap">
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${EXAM_TYPE_COLORS[ex.examType] ?? "bg-gray-100 text-gray-600"}`}>
+                      {EXAM_TYPE_LABELS[ex.examType] ?? ex.examType}
+                    </span>
+                    <p className="font-semibold text-xs">{ex.title}</p>
+                  </div>
+                  {ex.subjectName && <p className="text-[10px] text-primary font-medium mt-0.5">{ex.subjectName}</p>}
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    {new Date(ex.examDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                    {ex.startTime && ` · ${ex.startTime}${ex.endTime ? ` – ${ex.endTime}` : ""}`}
+                    {ex.room && ` · ${ex.room}`}
+                  </p>
+                  {!isPast && diff <= 7 && (
+                    <p className={`text-[10px] font-bold mt-0.5 ${diff === 0 ? "text-red-600" : diff <= 3 ? "text-amber-600" : "text-blue-600"}`}>
+                      {diff === 0 ? "Today!" : `In ${diff} day${diff !== 1 ? "s" : ""}`}
+                    </p>
+                  )}
+                  {ex.notes && <p className="text-[10px] text-muted-foreground mt-1 italic">{ex.notes}</p>}
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
+      <button onClick={() => setShowAll(!showAll)} className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors">
+        {showAll ? "Show upcoming only" : "Show all exams (including past)"}
+      </button>
+    </div>
+  );
+}
+
 function StudentCard({ student }: { student: LinkedStudent }) {
-  const [tab, setTab] = useState<"overview" | "fees" | "payments" | "announcements" | "homework">("overview");
+  const [tab, setTab] = useState<"overview" | "fees" | "payments" | "announcements" | "homework" | "exams">("overview");
 
   return (
     <div className="space-y-4">
@@ -1108,6 +1187,15 @@ function StudentCard({ student }: { student: LinkedStudent }) {
           <History className="h-3.5 w-3.5" /> My Payments
         </button>
         <button
+          onClick={() => setTab("exams")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all",
+            tab === "exams" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <CalendarDays className="h-3.5 w-3.5" /> Exams
+        </button>
+        <button
           onClick={() => setTab("homework")}
           className={cn(
             "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all",
@@ -1162,6 +1250,23 @@ function StudentCard({ student }: { student: LinkedStudent }) {
           </CardHeader>
           <CardContent>
             <MyPaymentRequestsCard studentId={student.id} />
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "exams" && (
+        <Card>
+          <CardHeader className="pb-0">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-orange-500" /> Exam Schedule
+              <span className="ml-auto text-xs font-normal text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Upcoming exams
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <ParentExamCard studentId={student.id} />
           </CardContent>
         </Card>
       )}

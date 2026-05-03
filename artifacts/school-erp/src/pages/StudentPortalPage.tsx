@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import {
   GraduationCap, CalendarCheck, BookOpen, Clock,
   CheckCircle2, XCircle, AlertCircle, MinusCircle,
-  TrendingUp, Award, BarChart3, User, Megaphone, BookMarked,
+  TrendingUp, Award, BarChart3, User, Megaphone, BookMarked, CalendarDays,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -47,6 +47,13 @@ type HomeworkResp = {
     id: number; classId: number; subjectId: number | null; subjectName: string | null;
     authorName: string; title: string; description: string; dueDate: string | null;
     status: string; createdAt: string;
+  }[];
+};
+type ExamScheduleResp = {
+  exams: {
+    id: number; classId: number; subjectId: number | null; subjectName: string | null;
+    authorName: string; title: string; examType: string; examDate: string;
+    startTime: string | null; endTime: string | null; room: string | null; notes: string | null;
   }[];
 };
 
@@ -189,13 +196,14 @@ export default function StudentPortalPage() {
 
       {/* ── Tabs ───────────────────────────────────────────────────────── */}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-6 w-full max-w-3xl">
+        <TabsList className="grid grid-cols-7 w-full max-w-4xl">
           <TabsTrigger value="overview"       className="text-xs">Overview</TabsTrigger>
           <TabsTrigger value="attendance"     className="text-xs">Attendance</TabsTrigger>
           <TabsTrigger value="results"        className="text-xs">Results</TabsTrigger>
           <TabsTrigger value="timetable"      className="text-xs">Timetable</TabsTrigger>
+          <TabsTrigger value="exams"          className="text-xs">Exams</TabsTrigger>
           <TabsTrigger value="homework"       className="text-xs">Homework</TabsTrigger>
-          <TabsTrigger value="announcements"  className="text-xs">Announcements</TabsTrigger>
+          <TabsTrigger value="announcements"  className="text-xs">Notices</TabsTrigger>
         </TabsList>
 
         {/* ── Overview ─────────────────────────────────────────────────── */}
@@ -446,6 +454,11 @@ export default function StudentPortalPage() {
           )}
         </TabsContent>
 
+        {/* ── Exams ─────────────────────────────────────────────────── */}
+        <TabsContent value="exams" className="mt-4">
+          <ExamScheduleTab />
+        </TabsContent>
+
         {/* ── Homework ──────────────────────────────────────────────── */}
         <TabsContent value="homework" className="mt-4">
           <HomeworkTab />
@@ -456,6 +469,98 @@ export default function StudentPortalPage() {
           <AnnouncementsTab />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+const EXAM_TYPE_LABELS: Record<string, string> = {
+  FINAL: "Final", MIDTERM: "Midterm", UNIT_TEST: "Unit Test",
+  QUIZ: "Quiz", ASSIGNMENT: "Assignment", PRACTICAL: "Practical",
+};
+const EXAM_TYPE_COLORS: Record<string, string> = {
+  FINAL: "bg-red-100 text-red-700", MIDTERM: "bg-orange-100 text-orange-700",
+  UNIT_TEST: "bg-amber-100 text-amber-700", QUIZ: "bg-blue-100 text-blue-700",
+  ASSIGNMENT: "bg-purple-100 text-purple-700", PRACTICAL: "bg-green-100 text-green-700",
+};
+
+function ExamScheduleTab() {
+  const [showAll, setShowAll] = useState(false);
+  const { data, isLoading } = useQuery<ExamScheduleResp>({
+    queryKey: ["student-exams", showAll],
+    queryFn: () => authedFetch(`/api/student/exam-schedule${showAll ? "?all=true" : ""}`),
+  });
+
+  const exams = data?.exams ?? [];
+  const today = new Date().toISOString().split("T")[0]!;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground mr-1">Show:</span>
+        {[false, true].map(v => (
+          <button key={String(v)} onClick={() => setShowAll(v)}
+            className={`text-xs px-2.5 py-1 rounded-full border font-medium transition-colors ${showAll === v ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
+            {v ? "All" : "Upcoming"}
+          </button>
+        ))}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 bg-muted animate-pulse rounded-xl" />)}</div>
+      ) : !exams.length ? (
+        <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+          <CalendarDays className="h-8 w-8 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">{showAll ? "No exams scheduled" : "No upcoming exams"}</p>
+          <p className="text-xs mt-1 opacity-70">Your teacher hasn't scheduled any{showAll ? "" : " upcoming"} exams yet.</p>
+        </div>
+      ) : (
+        exams.map(ex => {
+          const diff = Math.ceil((new Date(ex.examDate).getTime() - new Date(today).getTime()) / 86400000);
+          const isPast = diff < 0;
+          return (
+            <div key={ex.id} className={`rounded-xl border bg-card p-4 ${isPast ? "opacity-60" : ""}`}>
+              <div className="flex items-start gap-3">
+                <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${isPast ? "bg-gray-100" : "bg-orange-100"}`}>
+                  <CalendarDays className={`h-4 w-4 ${isPast ? "text-gray-400" : "text-orange-600"}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${EXAM_TYPE_COLORS[ex.examType] ?? "bg-gray-100 text-gray-600"}`}>
+                          {EXAM_TYPE_LABELS[ex.examType] ?? ex.examType}
+                        </span>
+                        <h4 className="font-semibold text-sm">{ex.title}</h4>
+                      </div>
+                      {ex.subjectName && <p className="text-[11px] text-primary font-medium mt-0.5">{ex.subjectName}</p>}
+                    </div>
+                    {!isPast && diff <= 7 && (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${diff === 0 ? "bg-red-100 text-red-600" : diff <= 3 ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-600"}`}>
+                        {diff === 0 ? "Today!" : `In ${diff}d`}
+                      </span>
+                    )}
+                    {isPast && <span className="text-[10px] text-muted-foreground shrink-0">Past</span>}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <CalendarDays className="h-3 w-3" />
+                      {new Date(ex.examDate).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+                    </span>
+                    {ex.startTime && (
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {ex.startTime}{ex.endTime ? ` – ${ex.endTime}` : ""}
+                      </span>
+                    )}
+                    {ex.room && <span>📍 {ex.room}</span>}
+                  </div>
+                  {ex.notes && <p className="text-xs text-muted-foreground mt-1.5 italic">{ex.notes}</p>}
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
