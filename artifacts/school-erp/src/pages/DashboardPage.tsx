@@ -13,13 +13,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend,
+  ResponsiveContainer, Legend, AreaChart, Area,
 } from "recharts";
 import {
   GraduationCap, Users, BookOpen, CalendarCheck,
   Banknote, AlertCircle, TrendingUp, UserPlus,
   ShieldCheck, ArrowRight, Sparkles, RefreshCw,
   BellRing, ShieldAlert, AlertTriangle,
+  TrendingDown, Percent,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
@@ -110,6 +111,147 @@ function StatCard({ title, value, icon: Icon, sub, color }: {
             <Icon className={cn("h-4.5 w-4.5", color ? "text-white" : "text-primary")} />
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Finance KPI Card ────────────────────────────────────────────────────────
+
+interface FinanceKpi {
+  collectionRate: number;
+  totalOutstanding: number;
+  collectedThisMonth: number;
+  billedThisMonth: number;
+  sparkline: { month: string; collected: number }[];
+}
+
+function FinanceKpiCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<FinanceKpi>({
+    queryKey: ["dashboard-finance-kpi"],
+    queryFn: () => customFetch("/api/dashboard/finance-kpi"),
+    refetchInterval: 5 * 60 * 1000,
+  });
+
+  const rate = data?.collectionRate ?? 0;
+  const rateColor = rate >= 80 ? "text-green-700" : rate >= 50 ? "text-amber-700" : "text-red-700";
+  const progressColor = rate >= 80 ? "bg-green-500" : rate >= 50 ? "bg-amber-500" : "bg-red-500";
+
+  return (
+    <Card className="border-blue-100 bg-gradient-to-br from-blue-50/40 to-transparent">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100">
+              <Banknote className="h-3.5 w-3.5 text-blue-600" />
+            </div>
+            <CardTitle className="text-sm font-semibold">Finance KPI</CardTitle>
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-blue-200 text-blue-600">
+              This Month
+            </Badge>
+          </div>
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* 3 KPI stat boxes */}
+        <div className="grid grid-cols-3 gap-3">
+          {/* Collection Rate */}
+          <div className="rounded-lg border bg-white/70 p-3 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Percent className="h-3.5 w-3.5 text-muted-foreground" />
+              <p className="text-[11px] text-muted-foreground font-medium">Collection Rate</p>
+            </div>
+            {isLoading ? (
+              <Skeleton className="h-6 w-16" />
+            ) : (
+              <p className={cn("text-2xl font-bold tabular-nums", rateColor)}>{rate}%</p>
+            )}
+            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all duration-500", progressColor)}
+                style={{ width: `${Math.min(rate, 100)}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Collected this month */}
+          <div className="rounded-lg border bg-white/70 p-3 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
+              <p className="text-[11px] text-muted-foreground font-medium">Collected</p>
+            </div>
+            {isLoading ? (
+              <Skeleton className="h-6 w-24" />
+            ) : (
+              <p className="text-xl font-bold text-green-700 tabular-nums">
+                ৳{(data?.collectedThisMonth ?? 0).toLocaleString()}
+              </p>
+            )}
+            {!isLoading && data && (
+              <p className="text-[10px] text-muted-foreground">
+                of ৳{data.billedThisMonth.toLocaleString()} billed
+              </p>
+            )}
+          </div>
+
+          {/* Total outstanding */}
+          <div className="rounded-lg border bg-white/70 p-3 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
+              <p className="text-[11px] text-muted-foreground font-medium">Outstanding</p>
+            </div>
+            {isLoading ? (
+              <Skeleton className="h-6 w-24" />
+            ) : (
+              <p className="text-xl font-bold text-red-700 tabular-nums">
+                ৳{(data?.totalOutstanding ?? 0).toLocaleString()}
+              </p>
+            )}
+            {!isLoading && (
+              <p className="text-[10px] text-muted-foreground">Pending + overdue</p>
+            )}
+          </div>
+        </div>
+
+        {/* 6-month sparkline */}
+        {isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : data?.sparkline && data.sparkline.length > 0 ? (
+          <div>
+            <p className="text-[10px] text-muted-foreground mb-1">6-month collection trend</p>
+            <ResponsiveContainer width="100%" height={64}>
+              <AreaChart data={data.sparkline} margin={{ top: 2, right: 4, bottom: 0, left: 4 }}>
+                <defs>
+                  <linearGradient id="kpiGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Tooltip
+                  contentStyle={{ fontSize: 11, border: "1px solid hsl(var(--border))", borderRadius: 6 }}
+                  formatter={(v: number) => [`৳${v.toLocaleString()}`, "Collected"]}
+                />
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <Area
+                  type="monotone"
+                  dataKey="collected"
+                  stroke="hsl(var(--chart-1))"
+                  strokeWidth={1.5}
+                  fill="url(#kpiGradient)"
+                  dot={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -413,8 +555,13 @@ export default function DashboardPage() {
         ) : null}
       </div>
 
-      {/* Escalation summary banner — finance roles only */}
-      {isFinanceRole && <EscalationSummaryCard />}
+      {/* Finance KPI + Escalation banner — finance roles only */}
+      {isFinanceRole && (
+        <div className="space-y-3">
+          <FinanceKpiCard />
+          <EscalationSummaryCard />
+        </div>
+      )}
 
       {/* Charts row: Revenue trend + activity/audit */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

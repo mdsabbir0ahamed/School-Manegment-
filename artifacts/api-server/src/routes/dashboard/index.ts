@@ -4,7 +4,7 @@ import {
   usersTable, studentsTable, classesTable,
   attendanceTable, invoicesTable, transactionsTable,
 } from "@workspace/db";
-import { eq, count, sum, and, gte, lte, sql, ne } from "drizzle-orm";
+import { eq, count, sum, and, gte, lte, sql, ne, or } from "drizzle-orm";
 import { requireAuth } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 
@@ -121,6 +121,58 @@ router.get("/dashboard/recent-activity", requireAuth, async (_req, res): Promise
     })),
   ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 10);
   res.json({ activities });
+});
+
+// ── GET /dashboard/finance-kpi ────────────────────────────────────────────
+// Returns collection rate, outstanding balance, and 6-month sparkline.
+// Restricted to SUPER_ADMIN + ACCOUNTANT.
+router.get("/dashboard/finance-kpi", requireAuth, requireFinance, async (_req, res): Promise<void> => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const currentMonth = `${year}-${month}`;
+  const monthStart = new Date(`${year}-${month}-01`);
+  const nextMonthStart = new Date(year, now.getMonth() + 1, 1);
+
+  // 6-month sparkline windows
+  const sparklineMonths: { label: string; start: Date; end: Date }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(year, now.getMonth() - i, 1);
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    sparklineMonths.push({
+      label: d.toLocaleString("default", { month: "short" }),
+      start: d,
+      end,
+    });
+  }
+
+  const [billedResult, collectedResult, outstandingResult, ...sparkResults] = await Promise.all([
+    db.select({ total: sum(invoicesTable.totalAmount) }).from(invoicesTable)
+      .where(eq(invoicesTable.month, currentMonth)),
+    db.select({ total: sum(transactionsTable.amountPaid) }).from(transactionsTable)
+      .where(and(gte(transactionsTable.paidAt, monthStart), lte(transactionsTable.paidAt, nextMonthStart))),
+    db.select({ total: sum(sql<string>`${invoicesTable.totalAmount}::numeric - ${invoicesTable.paidAmount}::numeric`) })
+      .from(invoicesTable)
+      .where(or(eq(invoicesTable.status, "PENDING"), eq(invoicesTable.status, "OVERDUE"))),
+    ...sparklineMonths.map(({ start, end }) =>
+      db.select({ total: sum(transactionsTable.amountPaid) }).from(transactionsTable)
+        .where(and(gte(transactionsTable.paidAt, start), lte(transactionsTable.paidAt, end)))
+    ),
+  ]);
+
+  const billedThisMonth = parseFloat(billedResult[0]?.total ?? "0");
+  const collectedThisMonth = parseFloat(collectedResult[0]?.total ?? "0");
+  const totalOutstanding = parseFloat(outstandingResult[0]?.total ?? "0");
+  const collectionRate = billedThisMonth > 0
+    ? Math.round((collectedThisMonth / billedThisMonth) * 1000) / 10
+    : 0;
+
+  const sparkline = sparklineMonths.map(({ label }, i) => ({
+    month: label,
+    collected: parseFloat(sparkResults[i]?.[0]?.total ?? "0"),
+  }));
+
+  res.json({ collectionRate, totalOutstanding, collectedThisMonth, billedThisMonth, sparkline });
 });
 
 // ── GET /dashboard/escalation-summary ─────────────────────────────────────
