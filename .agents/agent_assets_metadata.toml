@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "SbFFcMV7nBgcepzODKyXo"
+uri = "file://README.md"
+type = "text"
+title = "README.md — Technical Documentation"
+
+[[outputs]]
+id = "owqf7Y775qXxpZILMqctj"
+uri = "file://USER_MANUAL.md"
+type = "text"
+title = "USER_MANUAL.md — End-User Guide"
