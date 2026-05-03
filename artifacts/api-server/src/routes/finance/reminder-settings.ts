@@ -38,9 +38,11 @@ router.put(
   requireAuth,
   requireFinance,
   async (req, res): Promise<void> => {
-    const { isEnabled, reminderDays } = req.body as {
+    const { isEnabled, reminderDays, smsEnabled, whatsappEnabled } = req.body as {
       isEnabled?: boolean;
       reminderDays?: number[];
+      smsEnabled?: boolean;
+      whatsappEnabled?: boolean;
     };
 
     await ensureSettings();
@@ -49,6 +51,8 @@ router.put(
       updatedAt: new Date(),
     };
     if (typeof isEnabled === "boolean") updates.isEnabled = isEnabled;
+    if (typeof smsEnabled === "boolean") updates.smsEnabled = smsEnabled;
+    if (typeof whatsappEnabled === "boolean") updates.whatsappEnabled = whatsappEnabled;
     if (Array.isArray(reminderDays)) {
       const valid = reminderDays.filter(d => typeof d === "number" && d >= -30 && d <= 60);
       updates.reminderDays = JSON.stringify([...new Set(valid)].sort((a, b) => a - b));

@@ -71,6 +71,8 @@ type ReminderSettings = {
   id: number;
   isEnabled: boolean;
   reminderDays: number[];
+  smsEnabled: boolean;
+  whatsappEnabled: boolean;
   lastRunAt: string | null;
   lastRunCount: number;
 };
@@ -616,6 +618,8 @@ function RemindersTab() {
   const qc = useQueryClient();
   const [localDays, setLocalDays] = useState<number[] | null>(null);
   const [localEnabled, setLocalEnabled] = useState<boolean | null>(null);
+  const [localSms, setLocalSms] = useState<boolean | null>(null);
+  const [localWhatsapp, setLocalWhatsapp] = useState<boolean | null>(null);
   const [triggerResult, setTriggerResult] = useState<string | null>(null);
 
   const { data: settings, isLoading } = useQuery<ReminderSettings>({
@@ -625,9 +629,11 @@ function RemindersTab() {
 
   const effectiveDays = localDays ?? settings?.reminderDays ?? [-3, -1, 0, 1, 3, 7];
   const effectiveEnabled = localEnabled ?? settings?.isEnabled ?? true;
+  const effectiveSms = localSms ?? settings?.smsEnabled ?? false;
+  const effectiveWhatsapp = localWhatsapp ?? settings?.whatsappEnabled ?? false;
 
   const saveMutation = useMutation({
-    mutationFn: (body: { isEnabled: boolean; reminderDays: number[] }) =>
+    mutationFn: (body: { isEnabled: boolean; reminderDays: number[]; smsEnabled: boolean; whatsappEnabled: boolean }) =>
       authedFetch("/api/reminder-settings", {
         method: "PUT",
         body: JSON.stringify(body),
@@ -636,6 +642,8 @@ function RemindersTab() {
       qc.invalidateQueries({ queryKey: ["reminder-settings"] });
       setLocalDays(null);
       setLocalEnabled(null);
+      setLocalSms(null);
+      setLocalWhatsapp(null);
       toast({ title: "Reminder settings saved" });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
@@ -659,7 +667,7 @@ function RemindersTab() {
     );
   };
 
-  const isDirty = localDays !== null || localEnabled !== null;
+  const isDirty = localDays !== null || localEnabled !== null || localSms !== null || localWhatsapp !== null;
 
   if (isLoading) return (
     <div className="space-y-3 py-4">
@@ -743,10 +751,42 @@ function RemindersTab() {
         </p>
       </div>
 
+      {/* SMS / WhatsApp toggles */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-sm">SMS &amp; WhatsApp Reminders</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Also send reminders via SMS and/or WhatsApp when a matching invoice is found. Requires Twilio to be configured in Settings → Tenants.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="flex items-center justify-between rounded-lg border border-border p-3 gap-3">
+            <div>
+              <p className="text-sm font-medium">SMS Reminders</p>
+              <p className="text-xs text-muted-foreground">Send a text message to the parent's phone</p>
+            </div>
+            <Switch checked={effectiveSms} onCheckedChange={v => setLocalSms(v)} />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-border p-3 gap-3">
+            <div>
+              <p className="text-sm font-medium">WhatsApp Reminders</p>
+              <p className="text-xs text-muted-foreground">Send a WhatsApp message to the parent</p>
+            </div>
+            <Switch checked={effectiveWhatsapp} onCheckedChange={v => setLocalWhatsapp(v)} />
+          </div>
+        </div>
+        {(effectiveSms || effectiveWhatsapp) && (
+          <p className="text-xs text-amber-600 flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+            Phone resolved from: linked parent account → student's parent phone field. Configure Twilio in <strong>Settings → Tenants → SMS &amp; WhatsApp</strong>.
+          </p>
+        )}
+      </div>
+
       {/* Actions */}
       <div className="flex items-center gap-3 flex-wrap">
         <Button
-          onClick={() => saveMutation.mutate({ isEnabled: effectiveEnabled, reminderDays: effectiveDays })}
+          onClick={() => saveMutation.mutate({ isEnabled: effectiveEnabled, reminderDays: effectiveDays, smsEnabled: effectiveSms, whatsappEnabled: effectiveWhatsapp })}
           disabled={saveMutation.isPending || !isDirty}
         >
           {saveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -764,7 +804,7 @@ function RemindersTab() {
         </Button>
 
         {isDirty && (
-          <Button variant="ghost" size="sm" onClick={() => { setLocalDays(null); setLocalEnabled(null); }}>
+          <Button variant="ghost" size="sm" onClick={() => { setLocalDays(null); setLocalEnabled(null); setLocalSms(null); setLocalWhatsapp(null); }}>
             <RefreshCw className="mr-2 h-3.5 w-3.5" /> Reset
           </Button>
         )}
@@ -784,7 +824,7 @@ function RemindersTab() {
         <ul className="space-y-1.5 text-xs text-muted-foreground list-none">
           <li className="flex gap-2"><span className="text-indigo-500 font-bold">1.</span> The server checks for matching invoices every hour, but only sends once per calendar day.</li>
           <li className="flex gap-2"><span className="text-indigo-500 font-bold">2.</span> For each enabled window, it finds PENDING or OVERDUE invoices with a due date matching that offset from today.</li>
-          <li className="flex gap-2"><span className="text-indigo-500 font-bold">3.</span> Parents linked to the student receive an in-app notification. Finance staff receive a copy.</li>
+          <li className="flex gap-2"><span className="text-indigo-500 font-bold">3.</span> Parents linked to the student receive an in-app notification and, if SMS/WhatsApp is enabled, a text message. Finance staff receive an in-app copy.</li>
           <li className="flex gap-2"><span className="text-indigo-500 font-bold">4.</span> "Send Now" bypasses the daily limit for manual testing or urgent batches.</li>
         </ul>
       </div>
