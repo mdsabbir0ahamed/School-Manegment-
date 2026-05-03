@@ -18,3 +18,4 @@ export * from "./payroll";
 export * from "./reminder-settings";
 export * from "./payment-requests";
 export * from "./student-discounts";
+export * from "./expenses";

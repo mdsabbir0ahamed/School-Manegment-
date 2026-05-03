@@ -24,7 +24,12 @@ import {
   Bell, CheckCircle2, Download, Clock, Play, RefreshCw,
   Inbox, ThumbsUp, ThumbsDown, AlertCircle, XCircle,
   Layers, SkipForward, ListChecks, Tag, Percent, ToggleLeft, ToggleRight, Trash2, UserCheck,
+  Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
 } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from "recharts";
 import { customFetch } from "@workspace/api-client-react";
 
 const PAGE_SIZE = 15;
@@ -784,6 +789,465 @@ function RemindersTab() {
   );
 }
 
+// ── Expenses Tab ───────────────────────────────────────────────────────────
+
+const EXPENSE_CATEGORIES = [
+  "SALARY","RENT","UTILITIES","MAINTENANCE","SUPPLIES","TRANSPORT","FOOD","EVENTS","TECHNOLOGY","OTHER",
+] as const;
+type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
+const EXPENSE_STATUSES = ["PENDING","APPROVED","REJECTED","PAID"] as const;
+type ExpenseStatus = typeof EXPENSE_STATUSES[number];
+
+const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
+  SALARY: "#6366f1", RENT: "#f59e0b", UTILITIES: "#14b8a6", MAINTENANCE: "#f97316",
+  SUPPLIES: "#8b5cf6", TRANSPORT: "#3b82f6", FOOD: "#ec4899", EVENTS: "#10b981",
+  TECHNOLOGY: "#06b6d4", OTHER: "#94a3b8",
+};
+
+const STATUS_STYLES: Record<ExpenseStatus, string> = {
+  PENDING:  "bg-yellow-50 text-yellow-700 border-yellow-200",
+  APPROVED: "bg-blue-50 text-blue-700 border-blue-200",
+  REJECTED: "bg-red-50 text-red-700 border-red-200",
+  PAID:     "bg-green-50 text-green-700 border-green-200",
+};
+
+type ExpenseRow = {
+  id: number; category: ExpenseCategory; description: string; amount: number;
+  expenseDate: string; payee: string | null; referenceNumber: string | null;
+  notes: string | null; status: ExpenseStatus;
+  createdBy: string | null; approvedBy: string | null; createdAt: string;
+};
+
+type ExpenseSummary = {
+  year: number;
+  totals: { all: number; paid: number; pending: number; count: number };
+  monthly: { month: string; total: number }[];
+  byCategory: { category: ExpenseCategory; total: number; count: number }[];
+};
+
+function AddExpenseDialog({ open, onClose, onCreated }: {
+  open: boolean; onClose: () => void; onCreated: () => void;
+}) {
+  const { toast } = useToast();
+  const [category, setCategory]   = useState<string>("OTHER");
+  const [description, setDesc]    = useState("");
+  const [amount, setAmount]       = useState("");
+  const [expenseDate, setDate]    = useState(new Date().toISOString().slice(0, 10));
+  const [payee, setPayee]         = useState("");
+  const [refNum, setRefNum]       = useState("");
+  const [notes, setNotes]         = useState("");
+  const [loading, setLoading]     = useState(false);
+
+  const reset = () => {
+    setCategory("OTHER"); setDesc(""); setAmount("");
+    setDate(new Date().toISOString().slice(0, 10));
+    setPayee(""); setRefNum(""); setNotes("");
+  };
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleSubmit = async () => {
+    if (!description.trim() || !amount || !expenseDate) {
+      toast({ title: "Description, amount and date are required", variant: "destructive" }); return;
+    }
+    const val = parseFloat(amount);
+    if (isNaN(val) || val <= 0) {
+      toast({ title: "Enter a valid positive amount", variant: "destructive" }); return;
+    }
+    setLoading(true);
+    try {
+      await authedFetch("/api/finance/expenses", {
+        method: "POST",
+        body: JSON.stringify({ category, description: description.trim(), amount: val, expenseDate,
+          payee: payee.trim() || undefined, referenceNumber: refNum.trim() || undefined,
+          notes: notes.trim() || undefined }),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: "Expense recorded", description: `৳${val.toLocaleString()} — ${category}` });
+      onCreated(); handleClose();
+    } catch (e: any) {
+      toast({ title: "Failed to record expense", description: e.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Receipt className="h-4 w-4" /> Record Expense
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3 py-1">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Category *</Label>
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {EXPENSE_CATEGORIES.map(c => (
+                    <SelectItem key={c} value={c}>
+                      <span className="flex items-center gap-2">
+                        <span className="inline-block h-2 w-2 rounded-full" style={{ background: CATEGORY_COLORS[c as ExpenseCategory] }} />
+                        {c.charAt(0) + c.slice(1).toLowerCase()}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Amount (৳) *</Label>
+              <Input type="number" min="0.01" step="0.01" placeholder="e.g. 15000"
+                value={amount} onChange={e => setAmount(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Description *</Label>
+            <Input placeholder="e.g. Monthly electricity bill — July 2026"
+              value={description} onChange={e => setDesc(e.target.value)} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Date *</Label>
+              <Input type="date" value={expenseDate} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Payee <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
+              <Input placeholder="Vendor / supplier name" value={payee} onChange={e => setPayee(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Reference # <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
+              <Input placeholder="Invoice / voucher #" value={refNum} onChange={e => setRefNum(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Notes <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
+              <Input placeholder="Any extra detail…" value={notes} onChange={e => setNotes(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose} disabled={loading}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={loading}>
+            {loading
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</>
+              : <><Receipt className="mr-2 h-4 w-4" />Record Expense</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ExpensesTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [addOpen, setAddOpen]         = useState(false);
+  const [view, setView]               = useState<"list" | "summary">("summary");
+  const [catFilter, setCatFilter]     = useState<string>("all");
+  const [statusFilter2, setStatus2]   = useState<string>("all");
+  const [year, setYear]               = useState(new Date().getFullYear());
+  const [updatingId, setUpdatingId]   = useState<number | null>(null);
+  const [deletingId, setDeletingId]   = useState<number | null>(null);
+
+  const listQ = useQuery<{ expenses: ExpenseRow[]; total: number }>({
+    queryKey: ["expenses-list", catFilter, statusFilter2],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: "100" });
+      if (catFilter !== "all")   params.set("category", catFilter);
+      if (statusFilter2 !== "all") params.set("status", statusFilter2);
+      return authedFetch(`/api/finance/expenses?${params}`);
+    },
+  });
+
+  const summaryQ = useQuery<ExpenseSummary>({
+    queryKey: ["expenses-summary", year],
+    queryFn: () => authedFetch(`/api/finance/expenses/summary?year=${year}`),
+  });
+
+  const refetchAll = () => {
+    listQ.refetch(); summaryQ.refetch();
+    qc.invalidateQueries({ queryKey: ["expenses-list"] });
+    qc.invalidateQueries({ queryKey: ["expenses-summary"] });
+  };
+
+  const setStatus = async (id: number, status: ExpenseStatus) => {
+    setUpdatingId(id);
+    try {
+      await authedFetch(`/api/finance/expenses/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: `Expense marked as ${status.toLowerCase()}` });
+      refetchAll();
+    } catch (e: any) {
+      toast({ title: "Update failed", description: e.message, variant: "destructive" });
+    } finally { setUpdatingId(null); }
+  };
+
+  const deleteExpense = async (id: number) => {
+    setDeletingId(id);
+    try {
+      await authedFetch(`/api/finance/expenses/${id}`, { method: "DELETE" });
+      toast({ title: "Expense deleted" });
+      refetchAll();
+    } catch (e: any) {
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
+    } finally { setDeletingId(null); }
+  };
+
+  const summary = summaryQ.data;
+  const expenses = listQ.data?.expenses ?? [];
+  const monthLabels: Record<string, string> = {
+    "01":"Jan","02":"Feb","03":"Mar","04":"Apr","05":"May","06":"Jun",
+    "07":"Jul","08":"Aug","09":"Sep","10":"Oct","11":"Nov","12":"Dec",
+  };
+  const chartData = summary?.monthly.map(m => ({
+    name: monthLabels[m.month.slice(5)] ?? m.month.slice(5),
+    amount: m.total,
+  })) ?? [];
+
+  const pieData = summary?.byCategory.map(c => ({
+    name: c.category.charAt(0) + c.category.slice(1).toLowerCase(),
+    value: c.total,
+    fill: CATEGORY_COLORS[c.category],
+  })) ?? [];
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-1.5 bg-muted/50 rounded-lg p-1">
+          {(["summary","list"] as const).map(v => (
+            <button key={v} onClick={() => setView(v)}
+              className={cn("px-3 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
+                view === v ? "bg-white shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
+              {v === "summary" ? <span className="flex items-center gap-1.5"><BarChart3 className="h-3.5 w-3.5" />Summary</span>
+                               : <span className="flex items-center gap-1.5"><Receipt className="h-3.5 w-3.5" />All Expenses</span>}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          {view === "summary" && (
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setYear(y => y - 1)} className="p-1.5 rounded border hover:bg-muted"><ChevronLeft className="h-3.5 w-3.5" /></button>
+              <span className="text-sm font-medium tabular-nums w-12 text-center">{year}</span>
+              <button onClick={() => setYear(y => y + 1)} className="p-1.5 rounded border hover:bg-muted"><ChevronRight className="h-3.5 w-3.5" /></button>
+            </div>
+          )}
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Record Expense
+          </Button>
+        </div>
+      </div>
+
+      {/* ── SUMMARY VIEW ── */}
+      {view === "summary" && (
+        <div className="space-y-4">
+          {/* KPI cards */}
+          {summaryQ.isLoading ? (
+            <div className="grid grid-cols-4 gap-3">{Array.from({length:4}).map((_,i) => <div key={i} className="rounded-lg border bg-card p-4 h-20 animate-pulse bg-muted" />)}</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: "Total Expenses",  value: `৳${(summary?.totals.all ?? 0).toLocaleString()}`,     cls: "text-foreground" },
+                { label: "Paid",            value: `৳${(summary?.totals.paid ?? 0).toLocaleString()}`,    cls: "text-green-600" },
+                { label: "Pending Approval",value: `৳${(summary?.totals.pending ?? 0).toLocaleString()}`, cls: "text-yellow-600" },
+                { label: "Records",         value: summary?.totals.count ?? 0,                             cls: "text-indigo-600" },
+              ].map(s => (
+                <div key={s.label} className="rounded-lg border border-border bg-card p-4">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">{s.label}</p>
+                  <p className={cn("text-xl font-bold mt-1 tabular-nums", s.cls)}>{s.value}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Monthly bar chart */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-red-500" /> Monthly Paid Expenses — {year}
+            </h3>
+            {chartData.length === 0 ? (
+              <div className="h-48 flex items-center justify-center text-sm text-muted-foreground">No paid expenses recorded for {year}</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `৳${(v/1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number) => [`৳${v.toLocaleString()}`, "Paid"]} contentStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="amount" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Pie + table side-by-side */}
+          {pieData.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="text-sm font-semibold mb-3">Spending by Category</h3>
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                      {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                    </Pie>
+                    <Tooltip formatter={(v: number) => `৳${v.toLocaleString()}`} contentStyle={{ fontSize: 12 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="text-sm font-semibold mb-3">Category Breakdown</h3>
+                <div className="space-y-2">
+                  {summary?.byCategory.map(c => {
+                    const pct = summary.totals.paid > 0 ? (c.total / summary.totals.paid) * 100 : 0;
+                    return (
+                      <div key={c.category}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="inline-block h-2 w-2 rounded-full" style={{ background: CATEGORY_COLORS[c.category] }} />
+                            {c.category.charAt(0) + c.category.slice(1).toLowerCase()}
+                            <span className="text-muted-foreground">({c.count})</span>
+                          </span>
+                          <span className="font-medium tabular-nums">৳{c.total.toLocaleString()}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: CATEGORY_COLORS[c.category] }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── LIST VIEW ── */}
+      {view === "list" && (
+        <div className="space-y-3">
+          {/* Filters */}
+          <div className="flex gap-2 flex-wrap">
+            <Select value={catFilter} onValueChange={setCatFilter}>
+              <SelectTrigger className="w-40"><SelectValue placeholder="All categories" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All categories</SelectItem>
+                {EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c.charAt(0)+c.slice(1).toLowerCase()}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter2} onValueChange={setStatus2}>
+              <SelectTrigger className="w-36"><SelectValue placeholder="All statuses" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {EXPENSE_STATUSES.map(s => <SelectItem key={s} value={s}>{s.charAt(0)+s.slice(1).toLowerCase()}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground self-center ml-auto">{listQ.data?.total ?? 0} records</p>
+          </div>
+
+          {/* Table */}
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/30">
+                  {["Date","Category","Description","Payee","Amount","Status","Actions"].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {listQ.isLoading ? (
+                  Array.from({length:5}).map((_,i) => (
+                    <tr key={i}>{Array.from({length:7}).map((_,j) => (
+                      <td key={j} className="px-3 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td>
+                    ))}</tr>
+                  ))
+                ) : expenses.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-14 text-center text-sm text-muted-foreground">
+                      <Receipt className="h-8 w-8 mx-auto mb-2 opacity-25" />
+                      <p className="font-medium">No expenses found</p>
+                      <p className="text-xs mt-1">Record your first expense using the button above</p>
+                    </td>
+                  </tr>
+                ) : expenses.map(e => (
+                  <tr key={e.id} className="hover:bg-muted/20 transition-colors">
+                    <td className="px-3 py-3 text-xs whitespace-nowrap">
+                      {new Date(e.expenseDate).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })}
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                        <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ background: CATEGORY_COLORS[e.category] }} />
+                        {e.category.charAt(0)+e.category.slice(1).toLowerCase()}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 max-w-[200px]">
+                      <p className="text-sm font-medium line-clamp-1">{e.description}</p>
+                      {e.referenceNumber && <p className="text-xs text-muted-foreground font-mono">#{e.referenceNumber}</p>}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted-foreground">{e.payee ?? "—"}</td>
+                    <td className="px-3 py-3 font-bold tabular-nums text-sm whitespace-nowrap">৳{e.amount.toLocaleString()}</td>
+                    <td className="px-3 py-3">
+                      <span className={cn("inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold border uppercase tracking-wide", STATUS_STYLES[e.status])}>
+                        {e.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-1">
+                        {updatingId === e.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <>
+                            {e.status === "PENDING" && (
+                              <button onClick={() => setStatus(e.id, "APPROVED")} title="Approve"
+                                className="p-1 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors">
+                                <CheckCheck className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            {e.status === "APPROVED" && (
+                              <button onClick={() => setStatus(e.id, "PAID")} title="Mark Paid"
+                                className="p-1 rounded hover:bg-green-50 text-green-600 hover:text-green-800 transition-colors">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            {(e.status === "PENDING" || e.status === "APPROVED") && (
+                              <button onClick={() => setStatus(e.id, "REJECTED")} title="Reject"
+                                className="p-1 rounded hover:bg-red-50 text-red-400 hover:text-red-700 transition-colors">
+                                <XCircle className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            {e.status !== "PAID" && (
+                              <button onClick={() => deleteExpense(e.id)} disabled={deletingId === e.id} title="Delete"
+                                className="p-1 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-50">
+                                {deletingId === e.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <AddExpenseDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={refetchAll} />
+    </div>
+  );
+}
+
 // ── Discounts Tab ──────────────────────────────────────────────────────────
 
 type Discount = {
@@ -1426,6 +1890,9 @@ export default function FinancePage() {
           <TabsTrigger value="discounts" className="flex items-center gap-1.5">
             <Tag className="h-3.5 w-3.5" /> Discounts
           </TabsTrigger>
+          <TabsTrigger value="expenses" className="flex items-center gap-1.5">
+            <Receipt className="h-3.5 w-3.5" /> Expenses
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -1572,6 +2039,11 @@ export default function FinancePage() {
         {/* ── Discounts tab ── */}
         <TabsContent value="discounts" className="mt-4">
           <DiscountsTab />
+        </TabsContent>
+
+        {/* ── Expenses tab ── */}
+        <TabsContent value="expenses" className="mt-4">
+          <ExpensesTab />
         </TabsContent>
       </Tabs>
 
