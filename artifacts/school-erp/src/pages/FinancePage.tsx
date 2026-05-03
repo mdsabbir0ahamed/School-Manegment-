@@ -2649,6 +2649,223 @@ function HealthTab() {
   );
 }
 
+// ── Statement Activity Tab ─────────────────────────────────────────────────
+
+type StatActivityLog = {
+  id: number;
+  action: "PDF_DOWNLOAD" | "EMAIL_SENT";
+  sentTo: string | null;
+  deliveryMode: string | null;
+  createdAt: string;
+  student: { id: number | null; code: string; name: string } | null;
+  triggeredBy: { name: string; role: string } | null;
+};
+type StatActivityResp = {
+  logs: StatActivityLog[];
+  total: number;
+  page: number;
+  pageSize: number;
+  kpis: { totalDownloads: number; totalEmails: number; uniqueStudents: number; totalDispatches: number };
+  staffList: { id: number; name: string; role: string }[];
+};
+
+function StatementActivityTab() {
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
+  const [action,   setAction]   = useState("all");
+  const [staffId,  setStaffId]  = useState("all");
+  const [page,     setPage]     = useState(0);
+  const PAGE_SIZE_SA = 20;
+
+  const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE_SA) });
+  if (dateFrom)        params.set("dateFrom", dateFrom);
+  if (dateTo)          params.set("dateTo",   dateTo);
+  if (action !== "all")  params.set("action", action);
+  if (staffId !== "all") params.set("triggeredByUserId", staffId);
+
+  const { data, isLoading, isError, refetch } = useQuery<StatActivityResp>({
+    queryKey: ["statement-activity", dateFrom, dateTo, action, staffId, page],
+    queryFn: () => authedFetch<StatActivityResp>(`/api/finance/statement-activity?${params.toString()}`),
+    staleTime: 30_000,
+  });
+
+  const kpis = data?.kpis;
+  const kpiCards = [
+    { label: "Total Dispatches", value: kpis?.totalDispatches ?? 0,  icon: <Activity className="h-5 w-5" />, color: "text-indigo-600", bg: "bg-indigo-50" },
+    { label: "PDFs Downloaded",  value: kpis?.totalDownloads  ?? 0,  icon: <Download className="h-5 w-5" />, color: "text-blue-600",   bg: "bg-blue-50" },
+    { label: "Emails Sent",      value: kpis?.totalEmails     ?? 0,  icon: <Mail     className="h-5 w-5" />, color: "text-green-600", bg: "bg-green-50" },
+    { label: "Students Reached", value: kpis?.uniqueStudents  ?? 0,  icon: <Users    className="h-5 w-5" />, color: "text-violet-600", bg: "bg-violet-50" },
+  ];
+
+  const staffList = data?.staffList ?? [];
+  const logs      = data?.logs ?? [];
+  const total     = data?.total ?? 0;
+  const totalPages = Math.ceil(total / PAGE_SIZE_SA);
+
+  const resetFilters = () => { setDateFrom(""); setDateTo(""); setAction("all"); setStaffId("all"); setPage(0); };
+  const hasFilters   = dateFrom || dateTo || action !== "all" || staffId !== "all";
+
+  return (
+    <div className="space-y-5 mt-4">
+
+      {/* KPI row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {kpiCards.map(k => (
+          <div key={k.label} className="rounded-xl border bg-card p-4 flex items-center gap-3">
+            <div className={`rounded-lg p-2 ${k.bg} ${k.color}`}>{k.icon}</div>
+            <div>
+              <p className="text-xs text-muted-foreground">{k.label}</p>
+              <p className={`text-2xl font-bold ${k.color}`}>{k.value.toLocaleString()}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2 items-end">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">From</label>
+          <input
+            type="date" value={dateFrom}
+            onChange={e => { setDateFrom(e.target.value); setPage(0); }}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">To</label>
+          <input
+            type="date" value={dateTo}
+            onChange={e => { setDateTo(e.target.value); setPage(0); }}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">Action</label>
+          <Select value={action} onValueChange={v => { setAction(v); setPage(0); }}>
+            <SelectTrigger className="w-40 h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All actions</SelectItem>
+              <SelectItem value="PDF_DOWNLOAD">PDF Download</SelectItem>
+              <SelectItem value="EMAIL_SENT">Email Sent</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">Staff</label>
+          <Select value={staffId} onValueChange={v => { setStaffId(v); setPage(0); }}>
+            <SelectTrigger className="w-44 h-9"><SelectValue placeholder="All staff" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All staff</SelectItem>
+              {staffList.map(s => (
+                <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex gap-2 pb-0.5">
+          {hasFilters && (
+            <Button variant="ghost" size="sm" onClick={resetFilters} className="h-9 gap-1.5 text-xs">
+              <X className="h-3.5 w-3.5" /> Clear
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={() => refetch()} className="h-9 gap-1.5 text-xs">
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30">
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Timestamp</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Student</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Action</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Triggered By</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Sent To</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Delivery</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading && Array.from({ length: 6 }).map((_, i) => (
+              <tr key={i} className="border-b border-border last:border-0">
+                {Array.from({ length: 6 }).map((__, j) => (
+                  <td key={j} className="px-3 py-2.5"><div className="h-4 bg-muted animate-pulse rounded w-24" /></td>
+                ))}
+              </tr>
+            ))}
+            {isError && (
+              <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">Failed to load activity log.</td></tr>
+            )}
+            {!isLoading && !isError && logs.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-10 text-center text-muted-foreground">
+                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">{hasFilters ? "No results match these filters." : "No statement activity yet."}</p>
+                </td>
+              </tr>
+            )}
+            {logs.map((log, i) => {
+              const isPdf = log.action === "PDF_DOWNLOAD";
+              return (
+                <tr key={log.id} className={`border-b border-border last:border-0 ${i % 2 === 0 ? "" : "bg-muted/20"}`}>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                    {new Date(log.createdAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {log.student
+                      ? <span><span className="font-medium">{log.student.name}</span> <span className="text-xs text-muted-foreground">({log.student.code})</span></span>
+                      : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${isPdf ? "bg-indigo-50 text-indigo-700" : "bg-green-50 text-green-700"}`}>
+                      {isPdf ? <Download className="h-3 w-3" /> : <Mail className="h-3 w-3" />}
+                      {isPdf ? "PDF Download" : "Email Sent"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-sm">
+                    {log.triggeredBy
+                      ? <span>{log.triggeredBy.name} <span className="text-xs text-muted-foreground">({log.triggeredBy.role.replace("_", " ")})</span></span>
+                      : <span className="text-muted-foreground">System</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {log.sentTo ?? "—"}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {log.deliveryMode
+                      ? <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${log.deliveryMode === "email" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                          {log.deliveryMode === "email" ? "Delivered" : "Log only"}
+                        </span>
+                      : <span className="text-muted-foreground">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-sm">
+          <p className="text-muted-foreground">
+            Showing {page * PAGE_SIZE_SA + 1}–{Math.min((page + 1) * PAGE_SIZE_SA, total)} of {total}
+          </p>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EscalationsTab() {
   const { toast } = useToast();
   const [levelFilter, setLevelFilter] = useState<"ALL" | "CRITICAL" | "WARNING">("ALL");
@@ -4907,6 +5124,9 @@ export default function FinancePage() {
           <TabsTrigger value="health" className="flex items-center gap-1.5">
             <Activity className="h-3.5 w-3.5" /> Health
           </TabsTrigger>
+          <TabsTrigger value="statement-activity" className="flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5" /> Statement Activity
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -5164,6 +5384,11 @@ export default function FinancePage() {
         {/* ── Health tab ── */}
         <TabsContent value="health" className="mt-4">
           <HealthTab />
+        </TabsContent>
+
+        {/* ── Statement Activity tab ── */}
+        <TabsContent value="statement-activity">
+          <StatementActivityTab />
         </TabsContent>
       </Tabs>
 

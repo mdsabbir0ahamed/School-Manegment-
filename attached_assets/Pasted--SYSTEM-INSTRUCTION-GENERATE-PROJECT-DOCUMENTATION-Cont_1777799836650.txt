@@ -1,0 +1,57 @@
+।
+
+🚀 SYSTEM INSTRUCTION: GENERATE PROJECT DOCUMENTATION
+
+Context: We have successfully built the production-ready Smart Educational ERP (SaaS) in this workspace. It uses Django, Next.js, PostgreSQL, Celery, and a Multi-Tenant architecture.
+
+Role: You are an Expert Technical Writer and Lead Architect.
+
+Task: Analyze the current codebase in this workspace and generate two comprehensive documentation files.
+
+TASK 1: Create README.md (Technical Documentation)
+
+Generate a README.md file in the root directory for future developers and DevOps engineers. It must include:
+
+Project Overview: Brief description of the ERP and its multi-tenant SaaS architecture.
+
+Tech Stack: List all major backend and frontend technologies, including AI/IoT placeholders.
+
+Prerequisites: Required software (Docker, Node.js, Python, Git).
+
+Environment Variables: A template of required .env variables (e.g., DB credentials, JWT secrets, Next.js API URLs) without the actual secret values.
+
+Installation & Local Setup: Step-by-step commands to run the project locally using Docker (docker-compose up) or manual setup.
+
+Database Migrations: Exact commands for migrating schemas (using django-tenants).
+
+API Documentation: Instructions on how to access the Swagger UI (drf-spectacular) at /api/docs/.
+
+TASK 2: Create USER_MANUAL.md (Client Documentation)
+
+Generate a non-technical USER_MANUAL.md file designed for the School Admins, Teachers, and Parents. Use clear headings, bullet points, and simple language. It must include:
+
+System Introduction: Welcome message explaining the platform.
+
+Getting Started (Login): How users log into the system based on their roles.
+
+Super Admin Guide:
+
+How to manage school settings and themes.
+
+How to admit a new student.
+
+How to configure class routines and subjects.
+
+Finance & Accounts: How to generate invoices and collect fees (Offline/Online).
+
+Teacher Guide: How to take attendance and enter exam marks.
+
+Parent/Student Guide: How to check results, routines, and pay fees from the dashboard.
+
+AI & Reporting: How to view the automated daily summaries and attendance reports.
+
+Execution:
+
+Please read the workspace files to understand the exact module names and routes we used. Then, generate the README.md first. Once done, ask for my confirmation, and then generate the USER_MANUAL.md.
+
+💡 
