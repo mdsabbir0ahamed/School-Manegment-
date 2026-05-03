@@ -4,7 +4,7 @@ import {
   invoicesTable, transactionsTable, studentsTable,
   feeTypesTable, parentStudentsTable, classesTable,
 } from "@workspace/db";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import PDFDocument from "pdfkit";
 
@@ -317,6 +317,159 @@ router.get(
     }
 
     doc.end();
+  },
+);
+
+// ── GET /parent/fee-summary — cross-child consolidated summary ────────────
+
+router.get(
+  "/parent/fee-summary",
+  requireAuth,
+  async (req: AuthRequest, res): Promise<void> => {
+    if (!req.userId) { res.status(401).json({ error: "UNAUTHORIZED" }); return; }
+
+    // Load all linked students for this parent
+    const links = await db
+      .select({
+        studentId: parentStudentsTable.studentId,
+        relationship: parentStudentsTable.relationship,
+      })
+      .from(parentStudentsTable)
+      .where(eq(parentStudentsTable.parentUserId, req.userId));
+
+    if (!links.length) {
+      res.json({
+        aggregate: { totalOutstanding: 0, totalOverdue: 0, totalPaid: 0, totalInvoiced: 0, childrenCount: 0 },
+        children: [],
+        upcomingDues: [],
+        generatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const studentIds = links.map(l => l.studentId);
+
+    // Fetch all students, their classes, and all invoices in parallel
+    const [students, allInvoices, feeTypes] = await Promise.all([
+      db.select({
+        id: studentsTable.id,
+        studentId: studentsTable.studentId,
+        firstName: studentsTable.firstName,
+        lastName: studentsTable.lastName,
+        classId: studentsTable.classId,
+      }).from(studentsTable).where(inArray(studentsTable.id, studentIds)),
+      db.select({
+        id: invoicesTable.id,
+        invoiceNumber: invoicesTable.invoiceNumber,
+        studentId: invoicesTable.studentId,
+        feeTypeId: invoicesTable.feeTypeId,
+        totalAmount: invoicesTable.totalAmount,
+        paidAmount: invoicesTable.paidAmount,
+        dueDate: invoicesTable.dueDate,
+        status: invoicesTable.status,
+      }).from(invoicesTable).where(inArray(invoicesTable.studentId, studentIds)),
+      db.select({ id: feeTypesTable.id, name: feeTypesTable.name }).from(feeTypesTable),
+    ]);
+
+    // Class names
+    const classIds = [...new Set(students.map(s => s.classId).filter((id): id is number => !!id))];
+    const classRows = classIds.length
+      ? await db.select({ id: classesTable.id, name: classesTable.name, section: classesTable.section })
+          .from(classesTable).where(inArray(classesTable.id, classIds))
+      : [];
+    const classMap = new Map(classRows.map(c => [c.id, c.section ? `${c.name} – ${c.section}` : c.name]));
+
+    const feeTypeMap = new Map(feeTypes.map(f => [f.id, f.name]));
+    const studentMap = new Map(students.map(s => [s.id, s]));
+
+    // Build per-child data
+    const today = new Date().toISOString().split("T")[0]!;
+    type ChildSummary = {
+      id: number; studentId: string; firstName: string; lastName: string;
+      className: string | null; relationship: string;
+      totalInvoiced: number; totalPaid: number;
+      outstanding: number; overdueCount: number;
+      nextDueDate: string | null; nextDueAmount: number | null; nextDueInvoiceNumber: string | null;
+    };
+    const children: ChildSummary[] = [];
+
+    type UpcomingDue = {
+      studentId: number; studentName: string; className: string | null;
+      invoiceId: number; invoiceNumber: string; feeTypeName: string;
+      outstanding: number; dueDate: string; status: string; daysUntilDue: number;
+    };
+    const upcomingAll: UpcomingDue[] = [];
+
+    for (const link of links) {
+      const student = studentMap.get(link.studentId);
+      if (!student) continue;
+
+      const invoices = allInvoices.filter(i => i.studentId === link.studentId);
+      const className = student.classId ? (classMap.get(student.classId) ?? null) : null;
+
+      const totalInvoiced = invoices.reduce((s, i) => s + parseFloat(i.totalAmount), 0);
+      const totalPaid = invoices.reduce((s, i) => s + parseFloat(i.paidAmount), 0);
+      const outstanding = invoices
+        .filter(i => i.status !== "CANCELLED")
+        .reduce((s, i) => s + Math.max(0, parseFloat(i.totalAmount) - parseFloat(i.paidAmount)), 0);
+      const overdueCount = invoices.filter(i => i.status === "OVERDUE").length;
+
+      // Next pending/overdue invoice by due date
+      const openInvoices = invoices
+        .filter(i => i.status === "PENDING" || i.status === "OVERDUE")
+        .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      const next = openInvoices[0] ?? null;
+
+      children.push({
+        id: student.id,
+        studentId: student.studentId,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        className,
+        relationship: link.relationship,
+        totalInvoiced,
+        totalPaid,
+        outstanding,
+        overdueCount,
+        nextDueDate: next?.dueDate ?? null,
+        nextDueAmount: next ? Math.max(0, parseFloat(next.totalAmount) - parseFloat(next.paidAmount)) : null,
+        nextDueInvoiceNumber: next?.invoiceNumber ?? null,
+      });
+
+      // Collect upcoming dues (next 30 days or overdue)
+      for (const inv of openInvoices.slice(0, 5)) {
+        const daysUntil = Math.floor(
+          (new Date(inv.dueDate).getTime() - new Date(today).getTime()) / 86_400_000,
+        );
+        upcomingAll.push({
+          studentId: student.id,
+          studentName: `${student.firstName} ${student.lastName}`,
+          className,
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          feeTypeName: feeTypeMap.get(inv.feeTypeId) ?? "Fee",
+          outstanding: Math.max(0, parseFloat(inv.totalAmount) - parseFloat(inv.paidAmount)),
+          dueDate: inv.dueDate,
+          status: inv.status,
+          daysUntilDue: daysUntil,
+        });
+      }
+    }
+
+    // Sort upcoming by due date, take top 8
+    const upcomingDues = upcomingAll
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+      .slice(0, 8);
+
+    const aggregate = {
+      totalOutstanding: children.reduce((s, c) => s + c.outstanding, 0),
+      totalOverdue: children.reduce((s, c) => s + c.overdueCount, 0),
+      totalPaid: children.reduce((s, c) => s + c.totalPaid, 0),
+      totalInvoiced: children.reduce((s, c) => s + c.totalInvoiced, 0),
+      childrenCount: children.length,
+    };
+
+    res.json({ aggregate, children, upcomingDues, generatedAt: new Date().toISOString() });
   },
 );
 

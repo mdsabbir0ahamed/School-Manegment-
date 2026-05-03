@@ -14,10 +14,35 @@ import {
   Users, CalendarCheck, Banknote, AlertCircle, CheckCircle2,
   Clock, Link2, FileText, Download, Loader2, ChevronDown,
   ChevronUp, CreditCard, TrendingUp, Send, XCircle, HelpCircle, RefreshCw, History,
+  LayoutDashboard, CalendarClock, Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
+
+interface ChildSummary {
+  id: number; studentId: string; firstName: string; lastName: string;
+  className: string | null; relationship: string;
+  totalInvoiced: number; totalPaid: number;
+  outstanding: number; overdueCount: number;
+  nextDueDate: string | null; nextDueAmount: number | null; nextDueInvoiceNumber: string | null;
+}
+
+interface UpcomingDue {
+  studentId: number; studentName: string; className: string | null;
+  invoiceId: number; invoiceNumber: string; feeTypeName: string;
+  outstanding: number; dueDate: string; status: string; daysUntilDue: number;
+}
+
+interface FeeSummaryData {
+  aggregate: {
+    totalOutstanding: number; totalOverdue: number;
+    totalPaid: number; totalInvoiced: number; childrenCount: number;
+  };
+  children: ChildSummary[];
+  upcomingDues: UpcomingDue[];
+  generatedAt: string;
+}
 
 interface LinkedStudent {
   linkId: number; relationship: string; linkedAt: string;
@@ -56,6 +81,212 @@ interface FeeStatement {
   summary: FeeSummary;
   invoices: FeeInvoice[];
   generatedAt: string;
+}
+
+// ── Family Fee Summary Banner ──────────────────────────────────────────────
+
+function fetchAuthed<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("erp_token") ?? "";
+  return fetch(url, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}`, ...options?.headers },
+  }).then(async r => {
+    const ct = r.headers.get("content-type") ?? "";
+    if (!r.ok) {
+      const err = ct.includes("json") ? await r.json().catch(() => ({})) : {};
+      throw new Error((err as { error?: string })?.error ?? "Request failed");
+    }
+    if (ct.includes("json")) return r.json() as Promise<T>;
+    return r as unknown as T;
+  });
+}
+
+function useFeeSummary(parentUserId?: number) {
+  return useQuery<FeeSummaryData>({
+    queryKey: ["parent-fee-summary", parentUserId],
+    queryFn: () => fetchAuthed("/api/parent/fee-summary"),
+    enabled: !!parentUserId,
+    staleTime: 60_000,
+  });
+}
+
+function dueDateLabel(daysUntil: number): { text: string; cls: string } {
+  if (daysUntil < 0) return { text: `${Math.abs(daysUntil)}d overdue`, cls: "text-red-600 font-semibold" };
+  if (daysUntil === 0) return { text: "Due today", cls: "text-orange-600 font-semibold" };
+  if (daysUntil === 1) return { text: "Due tomorrow", cls: "text-orange-500 font-semibold" };
+  if (daysUntil <= 7) return { text: `Due in ${daysUntil}d`, cls: "text-yellow-600" };
+  return { text: `Due ${daysUntil}d`, cls: "text-muted-foreground" };
+}
+
+function FamilySummaryBanner({ parentUserId }: { parentUserId: number }) {
+  const { data, isLoading } = useFeeSummary(parentUserId);
+
+  if (isLoading) return (
+    <div className="space-y-3">
+      <Skeleton className="h-28 w-full rounded-xl" />
+      <Skeleton className="h-40 w-full rounded-xl" />
+    </div>
+  );
+  if (!data || !data.children.length) return null;
+
+  const { aggregate, children, upcomingDues } = data;
+  const allClear = aggregate.totalOutstanding === 0;
+
+  return (
+    <div className="space-y-4">
+      {/* ── Aggregate KPI strip ── */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <LayoutDashboard className="h-4 w-4 text-primary" />
+          <h2 className="font-semibold text-sm">Family Fee Overview</h2>
+          <span className="ml-auto text-[10px] text-muted-foreground">
+            {children.length} child{children.length !== 1 ? "ren" : ""} linked
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            {
+              label: "Total Outstanding",
+              value: `৳${aggregate.totalOutstanding.toLocaleString()}`,
+              sub: allClear ? "All fees cleared" : `across ${children.length} child${children.length !== 1 ? "ren" : ""}`,
+              cls: allClear ? "text-green-600" : aggregate.totalOutstanding > 0 ? "text-red-600" : "text-foreground",
+              icon: Wallet,
+            },
+            {
+              label: "Overdue Invoices",
+              value: String(aggregate.totalOverdue),
+              sub: aggregate.totalOverdue > 0 ? "Needs immediate attention" : "None overdue",
+              cls: aggregate.totalOverdue > 0 ? "text-red-600" : "text-green-600",
+              icon: AlertCircle,
+            },
+            {
+              label: "Total Paid",
+              value: `৳${aggregate.totalPaid.toLocaleString()}`,
+              sub: "all time",
+              cls: "text-green-600",
+              icon: CheckCircle2,
+            },
+            {
+              label: "Total Invoiced",
+              value: `৳${aggregate.totalInvoiced.toLocaleString()}`,
+              sub: "all children",
+              cls: "text-indigo-600",
+              icon: Banknote,
+            },
+          ].map(s => {
+            const Icon = s.icon;
+            return (
+              <div key={s.label} className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Icon className="h-3 w-3 text-muted-foreground" />
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{s.label}</p>
+                </div>
+                <p className={cn("text-lg font-bold tabular-nums leading-none", s.cls)}>{s.value}</p>
+                <p className="text-[10px] text-muted-foreground">{s.sub}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        {allClear && (
+          <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-700">
+            <CheckCircle2 className="h-4 w-4 shrink-0" /> All fees are fully cleared across all children
+          </div>
+        )}
+        {aggregate.totalOverdue > 0 && (
+          <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {aggregate.totalOverdue} overdue invoice{aggregate.totalOverdue !== 1 ? "s" : ""} — please contact the school to arrange payment
+          </div>
+        )}
+      </div>
+
+      {/* ── Per-child status row ── */}
+      {children.length > 1 && (
+        <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Users className="h-3.5 w-3.5 text-muted-foreground" />
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Per Child</h3>
+          </div>
+          <div className="space-y-2">
+            {children.map(child => (
+              <div key={child.id} className="flex items-center gap-3 rounded-lg border border-border bg-muted/10 px-4 py-3">
+                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary shrink-0">
+                  {child.firstName[0]}{child.lastName[0]}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{child.firstName} {child.lastName}</p>
+                  <p className="text-[10px] text-muted-foreground">{child.className ?? "No class"}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                  {child.overdueCount > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-semibold">
+                      <AlertCircle className="h-2.5 w-2.5" />
+                      {child.overdueCount} overdue
+                    </span>
+                  )}
+                  {child.outstanding > 0 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 text-orange-700 px-2 py-0.5 text-[10px] font-semibold">
+                      ৳{child.outstanding.toLocaleString()} due
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-semibold">
+                      <CheckCircle2 className="h-2.5 w-2.5" /> Cleared
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Upcoming dues ── */}
+      {upcomingDues.length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Upcoming &amp; Overdue Payments</h3>
+            <span className="ml-auto text-[10px] text-muted-foreground">{upcomingDues.length} invoice{upcomingDues.length !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="space-y-2">
+            {upcomingDues.map(due => {
+              const lbl = dueDateLabel(due.daysUntilDue);
+              const isOverdue = due.status === "OVERDUE" || due.daysUntilDue < 0;
+              return (
+                <div
+                  key={`${due.studentId}-${due.invoiceId}`}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg border px-4 py-3",
+                    isOverdue ? "border-red-200 bg-red-50/50" : "border-border bg-muted/10",
+                  )}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono text-xs text-muted-foreground">{due.invoiceNumber}</span>
+                      <span className="text-xs text-muted-foreground">·</span>
+                      <span className="text-xs font-medium truncate">{due.feeTypeName}</span>
+                      {children.length > 1 && (
+                        <>
+                          <span className="text-xs text-muted-foreground">·</span>
+                          <span className="text-xs text-muted-foreground truncate">{due.studentName}</span>
+                        </>
+                      )}
+                    </div>
+                    <p className={cn("text-xs mt-0.5", lbl.cls)}>{lbl.text} — {due.dueDate}</p>
+                  </div>
+                  <p className={cn("text-sm font-bold tabular-nums shrink-0", isOverdue ? "text-red-600" : "text-foreground")}>
+                    ৳{due.outstanding.toLocaleString()}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -842,6 +1073,10 @@ export default function ParentPortalPage() {
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {!isLoading && links.length > 0 && user?.id && (
+        <FamilySummaryBanner parentUserId={user.id} />
       )}
 
       {links.map((link, idx) => (
