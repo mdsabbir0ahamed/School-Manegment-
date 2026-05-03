@@ -23,6 +23,13 @@ export const tenantsTable = pgTable("tenants", {
   smtpPass: text("smtp_pass"),
   smtpFrom: text("smtp_from"),
   smtpSecure: boolean("smtp_secure").default(false),
+  // SMS / WhatsApp via Twilio (auth token stored as plaintext — encrypt in production)
+  twilioAccountSid: text("twilio_account_sid"),
+  twilioAuthToken: text("twilio_auth_token"),
+  twilioFromPhone: text("twilio_from_phone"),
+  twilioWhatsappFrom: text("twilio_whatsapp_from"),
+  smsEnabled: boolean("sms_enabled").default(false),
+  whatsappEnabled: boolean("whatsapp_enabled").default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

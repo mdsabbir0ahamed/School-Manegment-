@@ -7,6 +7,7 @@ import { requireSuperAdmin } from "../../middlewares/requireRole.js";
 import { invalidateTenantCache } from "../../middlewares/requireTenant.js";
 import { audit } from "../../lib/audit.js";
 import { buildTransporter, type SmtpConfig } from "../../lib/mailer.js";
+import { sendSms, sendWhatsapp, type SmsConfig } from "../../lib/sms.js";
 
 const router = Router();
 
@@ -192,6 +193,99 @@ router.post("/tenants/smtp-settings/test", requireAuth, requireSuperAdmin, async
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown SMTP error";
     res.status(502).json({ error: "SMTP_ERROR", message });
+  }
+});
+
+// ── SMS / WhatsApp Settings ───────────────────────────────────────────────
+
+router.get("/tenants/sms-settings", requireAuth, requireSuperAdmin, async (_req, res): Promise<void> => {
+  const [tenant] = await db.select({
+    twilioAccountSid: tenantsTable.twilioAccountSid,
+    twilioAuthToken: tenantsTable.twilioAuthToken,
+    twilioFromPhone: tenantsTable.twilioFromPhone,
+    twilioWhatsappFrom: tenantsTable.twilioWhatsappFrom,
+    smsEnabled: tenantsTable.smsEnabled,
+    whatsappEnabled: tenantsTable.whatsappEnabled,
+  }).from(tenantsTable).where(eq(tenantsTable.id, 1)).limit(1);
+
+  if (!tenant) { res.status(404).json({ error: "NOT_FOUND" }); return; }
+
+  res.json({
+    twilioAccountSid: tenant.twilioAccountSid ?? "",
+    twilioAuthTokenSet: !!tenant.twilioAuthToken,
+    twilioFromPhone: tenant.twilioFromPhone ?? "",
+    twilioWhatsappFrom: tenant.twilioWhatsappFrom ?? "",
+    smsEnabled: tenant.smsEnabled ?? false,
+    whatsappEnabled: tenant.whatsappEnabled ?? false,
+  });
+});
+
+router.put("/tenants/sms-settings", requireAuth, requireSuperAdmin, async (req: AuthRequest, res): Promise<void> => {
+  const { twilioAccountSid, twilioAuthToken, twilioFromPhone, twilioWhatsappFrom, smsEnabled, whatsappEnabled } =
+    req.body as {
+      twilioAccountSid?: string; twilioAuthToken?: string;
+      twilioFromPhone?: string; twilioWhatsappFrom?: string;
+      smsEnabled?: boolean; whatsappEnabled?: boolean;
+    };
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (twilioAccountSid !== undefined) updates["twilioAccountSid"] = twilioAccountSid || null;
+  if (twilioAuthToken !== undefined && twilioAuthToken !== "") updates["twilioAuthToken"] = twilioAuthToken;
+  if (twilioFromPhone !== undefined) updates["twilioFromPhone"] = twilioFromPhone || null;
+  if (twilioWhatsappFrom !== undefined) updates["twilioWhatsappFrom"] = twilioWhatsappFrom || null;
+  if (smsEnabled !== undefined) updates["smsEnabled"] = smsEnabled;
+  if (whatsappEnabled !== undefined) updates["whatsappEnabled"] = whatsappEnabled;
+
+  await db.update(tenantsTable).set(updates as any).where(eq(tenantsTable.id, 1));
+
+  await audit({
+    userId: req.userId, userEmail: req.userEmail, userRole: req.userRole,
+    action: "UPDATE", entity: "tenant", entityId: 1,
+    description: "Updated SMS/WhatsApp settings",
+  });
+
+  res.json({ success: true });
+});
+
+router.post("/tenants/sms-settings/test", requireAuth, requireSuperAdmin, async (req: AuthRequest, res): Promise<void> => {
+  const { to, channel } = req.body as { to?: string; channel?: "sms" | "whatsapp" };
+  if (!to?.trim()) { res.status(400).json({ error: "Recipient phone number required" }); return; }
+
+  const [tenant] = await db.select({
+    twilioAccountSid: tenantsTable.twilioAccountSid,
+    twilioAuthToken: tenantsTable.twilioAuthToken,
+    twilioFromPhone: tenantsTable.twilioFromPhone,
+    twilioWhatsappFrom: tenantsTable.twilioWhatsappFrom,
+    name: tenantsTable.name,
+  }).from(tenantsTable).where(eq(tenantsTable.id, 1)).limit(1);
+
+  if (!tenant?.twilioAccountSid || !tenant.twilioAuthToken) {
+    res.status(422).json({ error: "Twilio not configured — set Account SID and Auth Token first" });
+    return;
+  }
+
+  const cfg: SmsConfig = {
+    accountSid: tenant.twilioAccountSid,
+    authToken: tenant.twilioAuthToken,
+    fromPhone: tenant.twilioFromPhone ?? "",
+    whatsappFrom: tenant.twilioWhatsappFrom ?? "",
+  };
+
+  const body = `Test message from ${tenant.name} School ERP. Your notification settings are working correctly.`;
+
+  try {
+    const result = channel === "whatsapp"
+      ? await sendWhatsapp(to.trim(), body, cfg)
+      : await sendSms(to.trim(), body, cfg);
+
+    if (!result.delivered) {
+      res.status(502).json({ error: "TWILIO_ERROR", message: result.error });
+      return;
+    }
+    res.json({ success: true, sid: result.sid, message: `Test ${channel ?? "sms"} sent to ${to.trim()}` });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(502).json({ error: "TWILIO_ERROR", message });
   }
 });
 

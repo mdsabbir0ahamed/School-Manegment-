@@ -9,6 +9,7 @@ import { requireAuth } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import PDFDocument from "pdfkit";
 import { sendMail, sendMailWithConfig, type SmtpConfig } from "../../lib/mailer.js";
+import { sendSms, sendWhatsapp, type SmsConfig } from "../../lib/sms.js";
 
 const router = Router();
 
@@ -475,6 +476,7 @@ router.post(
         lastName: studentsTable.lastName,
         parentEmail: studentsTable.parentEmail,
         parentName: studentsTable.parentName,
+        parentPhone: studentsTable.parentPhone,
       }).from(studentsTable).where(eq(studentsTable.id, txn.studentId)).limit(1),
       db.select().from(tenantsTable).limit(1),
     ]);
@@ -484,9 +486,15 @@ router.post(
           .where(eq(feeTypesTable.id, invoice.feeTypeId)).limit(1)
       : [null];
 
-    // Resolve parent email: prefer linked parent user account, fallback to student.parentEmail
+    // Resolve parent contact: prefer linked parent user account, fallback to student fields
     const [linkedParent] = await db
-      .select({ email: usersTable.email, userId: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName })
+      .select({
+        email: usersTable.email,
+        userId: usersTable.id,
+        firstName: usersTable.firstName,
+        lastName: usersTable.lastName,
+        phoneNumber: usersTable.phoneNumber,
+      })
       .from(parentStudentsTable)
       .innerJoin(usersTable, eq(usersTable.id, parentStudentsTable.parentUserId))
       .where(eq(parentStudentsTable.studentId, txn.studentId))
@@ -621,24 +629,63 @@ router.post(
       ? await sendMailWithConfig(dbSmtp, mailPayload)
       : await sendMail(mailPayload);
 
+    // ── SMS / WhatsApp notification ────────────────────────────────────────
+    const smsBody =
+      `Payment confirmed: ${studentName} — BDT ${amountPaid.toLocaleString("en-US", { minimumFractionDigits: 2 })} received (TXN-${id}). Thank you — ${schoolName}`;
+
+    const recipientPhone =
+      linkedParent?.phoneNumber ?? student?.parentPhone ?? null;
+
+    const smsResults: string[] = [];
+    if (
+      recipientPhone &&
+      tenant?.twilioAccountSid &&
+      tenant.twilioAuthToken
+    ) {
+      const smsCfg: SmsConfig = {
+        accountSid: tenant.twilioAccountSid,
+        authToken: tenant.twilioAuthToken,
+        fromPhone: tenant.twilioFromPhone ?? "",
+        whatsappFrom: tenant.twilioWhatsappFrom ?? "",
+      };
+
+      if (tenant.smsEnabled && smsCfg.fromPhone) {
+        const smsResult = await sendSms(recipientPhone, smsBody, smsCfg);
+        if (smsResult.delivered) smsResults.push("SMS");
+      }
+      if (tenant.whatsappEnabled && smsCfg.whatsappFrom) {
+        const waResult = await sendWhatsapp(recipientPhone, smsBody, smsCfg);
+        if (waResult.delivered) smsResults.push("WhatsApp");
+      }
+    }
+
     // Create in-app notification for the linked parent user (if they have an account)
     if (linkedParent?.userId) {
+      const channels = [result.deliveryMode === "email" ? "Email" : null, ...smsResults]
+        .filter(Boolean).join(", ");
       await db.insert(notificationsTable).values({
         userId: linkedParent.userId,
         title: `Payment Receipt — TXN-${id}`,
-        message: `Receipt for ${studentName} (BDT ${amountPaid.toLocaleString("en-US", { minimumFractionDigits: 2 })}) has been emailed to ${recipientEmail}.`,
+        message: `Receipt for ${studentName} (BDT ${amountPaid.toLocaleString("en-US", { minimumFractionDigits: 2 })}) sent via ${channels || "in-app"}.`,
         type: "INFO",
         link: "/finance",
       });
     }
 
+    const channelsSent = [
+      result.deliveryMode === "email" ? `email (${recipientEmail})` : null,
+      ...smsResults.map(c => `${c} (${recipientPhone})`),
+    ].filter(Boolean);
+
     res.json({
       success: true,
       sentTo: recipientEmail,
+      phoneUsed: recipientPhone,
       deliveryMode: result.deliveryMode,
-      message: result.deliveryMode === "email"
-        ? `Receipt emailed to ${recipientEmail}`
-        : `SMTP not configured — receipt logged. Set up email delivery in Settings → Tenants → Email Settings.`,
+      smsChannels: smsResults,
+      message: channelsSent.length > 0
+        ? `Receipt sent via: ${channelsSent.join(", ")}`
+        : `SMTP not configured — receipt logged. Configure Email/SMS settings in the Tenants page.`,
     });
   },
 );
