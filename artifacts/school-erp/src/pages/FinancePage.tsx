@@ -27,7 +27,7 @@ import {
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
   TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
   Target, PencilLine, AlertTriangle, ShieldCheck, BookOpen,
-  Upload, FileText, X,
+  Upload, FileText, X, Users,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -1510,6 +1510,266 @@ type CollectionKpis = {
 };
 type CollectionReport = { academicYear: string; kpis: CollectionKpis; byClass: ClassCollection[] };
 
+// ── Class Detail types ──────────────────────────────────────────────────────
+
+type StudentInvoice = {
+  id: number; invoiceNumber: string; feeTypeName: string; month: string | null;
+  totalAmount: number; paidAmount: number; status: string; dueDate: string;
+};
+type StudentRow = {
+  studentId: number; studentCode: string; studentName: string;
+  paymentStatus: "FULLY_PAID" | "PARTIAL" | "UNPAID" | "NO_INVOICES";
+  invoiceCount: number; paidCount: number; pendingCount: number; overdueCount: number;
+  totalBilled: number; totalPaid: number; outstanding: number;
+  invoices: StudentInvoice[];
+};
+type ClassDetailKpis = {
+  totalBilled: number; totalPaid: number; outstanding: number; studentCount: number;
+  fullyPaidCount: number; partialCount: number; unpaidCount: number; overdueCount: number;
+};
+type ClassDetail = {
+  academicYear: string; classId: number; className: string; gradeLevel: number;
+  kpis: ClassDetailKpis; students: StudentRow[];
+};
+
+const PAYMENT_STATUS_STYLE: Record<string, string> = {
+  FULLY_PAID:  "bg-green-100 text-green-700",
+  PARTIAL:     "bg-amber-100 text-amber-700",
+  UNPAID:      "bg-red-100 text-red-700",
+  NO_INVOICES: "bg-gray-100 text-gray-500",
+};
+const PAYMENT_STATUS_LABEL: Record<string, string> = {
+  FULLY_PAID:  "Fully Paid",
+  PARTIAL:     "Partial",
+  UNPAID:      "Unpaid",
+  NO_INVOICES: "No Invoices",
+};
+
+// ── ClassDetailModal ───────────────────────────────────────────────────────
+
+function ClassDetailModal({ classId, className, gradeLevel, academicYear, onClose }: {
+  classId: number; className: string; gradeLevel: number;
+  academicYear: string; onClose: () => void;
+}) {
+  const [search, setSearch]     = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [expandedStudents, setExpandedStudents] = useState<Set<number>>(new Set());
+
+  const { data, isLoading } = useQuery<ClassDetail>({
+    queryKey: ["class-detail", classId, academicYear],
+    queryFn: () => authedFetch(`/api/finance/collection-report/class-detail?academicYear=${academicYear}&classId=${classId}`),
+  });
+
+  const toggleStudent = (id: number) =>
+    setExpandedStudents(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  const filtered = (data?.students ?? []).filter(s => {
+    const matchSearch = !search || s.studentName.toLowerCase().includes(search.toLowerCase()) || s.studentCode.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === "all" || s.paymentStatus === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  const k = data?.kpis;
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[88vh] flex flex-col gap-0 p-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">
+              {gradeLevel}
+            </span>
+            <div>
+              <h2 className="text-base font-semibold">{className}</h2>
+              <p className="text-xs text-muted-foreground">Fee collection · {academicYear}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-muted transition-colors">
+            <X className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex items-center justify-center h-48">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="p-5 space-y-4">
+              {/* KPI strip */}
+              {k && (
+                <div className="grid grid-cols-4 gap-3">
+                  {[
+                    { label: "Total Billed",   value: `৳${k.totalBilled.toLocaleString()}`,  color: "text-blue-600"  },
+                    { label: "Collected",       value: `৳${k.totalPaid.toLocaleString()}`,    color: "text-green-600" },
+                    { label: "Outstanding",     value: `৳${k.outstanding.toLocaleString()}`,  color: k.outstanding > 0 ? "text-red-600" : "text-green-600" },
+                    { label: "Collection Rate", value: k.totalBilled > 0 ? `${((k.totalPaid / k.totalBilled) * 100).toFixed(1)}%` : "—",
+                      color: k.totalBilled > 0 ? rateColor((k.totalPaid / k.totalBilled) * 100) : "text-muted-foreground" },
+                  ].map(c => (
+                    <div key={c.label} className="rounded-lg border border-border bg-card px-3 py-2.5 space-y-0.5">
+                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{c.label}</p>
+                      <p className={cn("text-lg font-bold tabular-nums", c.color)}>{c.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Status pills */}
+              {k && (
+                <div className="flex items-center gap-2 text-xs flex-wrap">
+                  {[
+                    { label: `${k.fullyPaidCount} Fully Paid`,  style: "bg-green-100 text-green-700" },
+                    { label: `${k.partialCount} Partial`,       style: "bg-amber-100 text-amber-700" },
+                    { label: `${k.unpaidCount} Unpaid`,         style: "bg-red-100 text-red-700" },
+                    { label: `${k.overdueCount} with Overdue`,  style: "bg-orange-100 text-orange-700" },
+                  ].map(p => (
+                    <span key={p.label} className={cn("px-2 py-0.5 rounded-full font-medium", p.style)}>{p.label}</span>
+                  ))}
+                  <span className="ml-auto text-muted-foreground">{k.studentCount} students total</span>
+                </div>
+              )}
+
+              {/* Filters */}
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="Search by name or ID…"
+                  value={search} onChange={e => setSearch(e.target.value)}
+                  className="h-8 text-xs w-56"
+                />
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="FULLY_PAID">Fully Paid</SelectItem>
+                    <SelectItem value="PARTIAL">Partial</SelectItem>
+                    <SelectItem value="UNPAID">Unpaid</SelectItem>
+                    <SelectItem value="NO_INVOICES">No Invoices</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground ml-auto">
+                  Showing {filtered.length} of {data?.students.length ?? 0}
+                </span>
+              </div>
+
+              {/* Student table */}
+              {filtered.length === 0 ? (
+                <div className="rounded-lg border border-border bg-card py-10 text-center">
+                  <Users className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                  <p className="text-sm text-muted-foreground">No students match the filter</p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-border overflow-hidden">
+                  {/* Header */}
+                  <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_28px] bg-muted/30 border-b border-border px-4 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                    <span>Student</span>
+                    <span className="text-right">Invoices</span>
+                    <span className="text-right">Billed</span>
+                    <span className="text-right">Paid</span>
+                    <span className="text-right">Outstanding</span>
+                    <span className="text-right">Status</span>
+                    <span />
+                  </div>
+
+                  <div className="divide-y divide-border/50">
+                    {filtered.map(s => {
+                      const isOpen = expandedStudents.has(s.studentId);
+                      return (
+                        <div key={s.studentId}>
+                          {/* Student row */}
+                          <button
+                            onClick={() => toggleStudent(s.studentId)}
+                            className="w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_28px] px-4 py-3 text-sm hover:bg-muted/20 transition-colors text-left items-center"
+                          >
+                            <span className="flex flex-col gap-0.5">
+                              <span className="font-medium">{s.studentName}</span>
+                              <span className="text-[10px] text-muted-foreground font-mono">{s.studentCode}</span>
+                            </span>
+                            <span className="text-right tabular-nums text-muted-foreground text-xs">
+                              {s.invoiceCount}
+                              {s.overdueCount > 0 && (
+                                <span className="ml-1 text-red-500">({s.overdueCount} OD)</span>
+                              )}
+                            </span>
+                            <span className="text-right tabular-nums">৳{s.totalBilled.toLocaleString()}</span>
+                            <span className="text-right tabular-nums text-green-600">৳{s.totalPaid.toLocaleString()}</span>
+                            <span className={cn("text-right tabular-nums font-semibold", s.outstanding > 0 ? "text-red-600" : "text-green-600")}>
+                              {s.outstanding > 0 ? `৳${s.outstanding.toLocaleString()}` : "৳0"}
+                            </span>
+                            <span className="flex justify-end">
+                              <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-semibold", PAYMENT_STATUS_STYLE[s.paymentStatus])}>
+                                {PAYMENT_STATUS_LABEL[s.paymentStatus]}
+                              </span>
+                            </span>
+                            <span className="flex justify-center">
+                              <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", isOpen && "rotate-90")} />
+                            </span>
+                          </button>
+
+                          {/* Invoice sub-rows */}
+                          {isOpen && (
+                            <div className="border-t border-border/30 bg-muted/10">
+                              {s.invoices.length === 0 ? (
+                                <p className="px-8 py-3 text-xs text-muted-foreground italic">No invoices in {academicYear}</p>
+                              ) : (
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-border/30">
+                                      {["Invoice #", "Fee Type", "Month", "Due Date", "Amount", "Paid", "Status"].map(h => (
+                                        <th key={h} className="px-4 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-border/30">
+                                    {s.invoices.map(inv => (
+                                      <tr key={inv.id} className="hover:bg-muted/10">
+                                        <td className="px-4 py-2 font-mono text-[10px] text-muted-foreground">{inv.invoiceNumber}</td>
+                                        <td className="px-4 py-2">{inv.feeTypeName}</td>
+                                        <td className="px-4 py-2 text-muted-foreground">{inv.month ?? "—"}</td>
+                                        <td className="px-4 py-2 tabular-nums text-muted-foreground">{inv.dueDate}</td>
+                                        <td className="px-4 py-2 tabular-nums font-medium">৳{inv.totalAmount.toLocaleString()}</td>
+                                        <td className="px-4 py-2 tabular-nums text-green-600">৳{inv.paidAmount.toLocaleString()}</td>
+                                        <td className="px-4 py-2">
+                                          <span className={cn("px-1.5 py-0.5 rounded text-[9px] font-bold uppercase", statusColors[inv.status])}>
+                                            {inv.status}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer totals */}
+                  {k && (
+                    <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_28px] border-t border-border bg-muted/30 px-4 py-3 text-sm font-semibold">
+                      <span className="text-muted-foreground">Total ({k.studentCount} students)</span>
+                      <span />
+                      <span className="text-right tabular-nums">৳{k.totalBilled.toLocaleString()}</span>
+                      <span className="text-right tabular-nums text-green-700">৳{k.totalPaid.toLocaleString()}</span>
+                      <span className={cn("text-right tabular-nums", k.outstanding > 0 ? "text-red-700" : "text-green-700")}>
+                        {k.outstanding > 0 ? `৳${k.outstanding.toLocaleString()}` : "৳0"}
+                      </span>
+                      <span />
+                      <span />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function rateColor(rate: number) {
   if (rate >= 90) return "text-green-600";
   if (rate >= 60) return "text-amber-600";
@@ -1525,6 +1785,7 @@ function CollectionReportTab() {
   const { toast } = useToast();
   const [academicYear, setAcademicYear] = useState(currentAcademicYear());
   const [expanded, setExpanded]         = useState<Set<number>>(new Set());
+  const [drillClass, setDrillClass]     = useState<{ classId: number; className: string; gradeLevel: number } | null>(null);
 
   const now = new Date();
   const curStart = (now.getMonth() + 1) >= 7 ? now.getFullYear() : now.getFullYear() - 1;
@@ -1671,14 +1932,14 @@ function CollectionReportTab() {
               </div>
 
               {/* Column headers */}
-              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1.5fr_28px] gap-0 border-b border-border/50 px-4 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                <span>Class / Fee Type</span>
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1.5fr_auto_28px] gap-0 border-b border-border/50 px-4 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                <span>Class</span>
                 <span className="text-right">Students</span>
                 <span className="text-right">Expected</span>
                 <span className="text-right">Billed</span>
                 <span className="text-right">Collected</span>
-                <span className="text-right">Gap</span>
                 <span className="text-right">Rate</span>
+                <span />
                 <span />
               </div>
 
@@ -1688,25 +1949,22 @@ function CollectionReportTab() {
                   return (
                     <div key={cls.classId}>
                       {/* Class row */}
-                      <button
-                        onClick={() => toggleExpand(cls.classId)}
-                        className="w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1.5fr_28px] gap-0 px-4 py-3 text-sm hover:bg-muted/20 transition-colors text-left items-center"
-                      >
-                        <span className="flex items-center gap-2 font-semibold">
+                      <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1.5fr_auto_28px] gap-0 px-4 py-3 text-sm hover:bg-muted/20 transition-colors items-center">
+                        <button
+                          onClick={() => toggleExpand(cls.classId)}
+                          className="flex items-center gap-2 font-semibold text-left"
+                        >
                           <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">
                             {cls.gradeLevel}
                           </span>
                           {cls.className}
-                        </span>
+                        </button>
                         <span className="text-right text-muted-foreground tabular-nums">{cls.studentCount}</span>
                         <span className="text-right tabular-nums font-medium">৳{cls.expected.toLocaleString()}</span>
                         <span className="text-right tabular-nums text-blue-600">৳{cls.billed.toLocaleString()}</span>
                         <span className="text-right tabular-nums text-green-600 font-semibold">৳{cls.collected.toLocaleString()}</span>
-                        <span className={cn("text-right tabular-nums font-semibold text-xs", cls.gap > 0 ? "text-red-600" : "text-green-600")}>
-                          {cls.gap > 0 ? `-৳${cls.gap.toLocaleString()}` : "৳0"}
-                        </span>
                         <span className="flex items-center justify-end gap-1.5">
-                          <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div className="w-14 h-1.5 rounded-full bg-muted overflow-hidden">
                             <div className={cn("h-full rounded-full transition-all", rateBg(cls.collectionRate))}
                               style={{ width: `${Math.min(cls.collectionRate, 100)}%` }} />
                           </div>
@@ -1714,10 +1972,16 @@ function CollectionReportTab() {
                             {cls.collectionRate.toFixed(1)}%
                           </span>
                         </span>
-                        <span className="flex justify-center">
+                        <button
+                          onClick={() => setDrillClass({ classId: cls.classId, className: cls.className, gradeLevel: cls.gradeLevel })}
+                          className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-2 py-1 rounded transition-colors font-medium whitespace-nowrap"
+                        >
+                          <Users className="h-3 w-3" /> Students
+                        </button>
+                        <button onClick={() => toggleExpand(cls.classId)} className="flex justify-center">
                           <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", isOpen && "rotate-90")} />
-                        </span>
-                      </button>
+                        </button>
+                      </div>
 
                       {/* Fee type sub-rows */}
                       {isOpen && (
@@ -1761,24 +2025,31 @@ function CollectionReportTab() {
 
               {/* Footer totals */}
               {k && (
-                <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1.5fr_28px] gap-0 border-t border-border bg-muted/30 px-4 py-3 text-sm font-semibold">
+                <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1.5fr_auto_28px] gap-0 border-t border-border bg-muted/30 px-4 py-3 text-sm font-semibold">
                   <span className="text-muted-foreground">Total ({k.classCount} classes)</span>
                   <span />
                   <span className="text-right tabular-nums">৳{k.totalExpected.toLocaleString()}</span>
                   <span className="text-right tabular-nums text-blue-700">৳{k.totalBilled.toLocaleString()}</span>
                   <span className="text-right tabular-nums text-green-700">৳{k.totalCollected.toLocaleString()}</span>
-                  <span className={cn("text-right tabular-nums text-xs", k.totalGap > 0 ? "text-red-700" : "text-green-700")}>
-                    {k.totalGap > 0 ? `-৳${k.totalGap.toLocaleString()}` : "৳0"}
-                  </span>
                   <span className={cn("text-right tabular-nums", rateColor(k.collectionRate))}>
                     {k.collectionRate.toFixed(1)}%
                   </span>
-                  <span />
+                  <span /><span />
                 </div>
               )}
             </div>
           )}
         </>
+      )}
+
+      {drillClass && (
+        <ClassDetailModal
+          classId={drillClass.classId}
+          className={drillClass.className}
+          gradeLevel={drillClass.gradeLevel}
+          academicYear={academicYear}
+          onClose={() => setDrillClass(null)}
+        />
       )}
     </div>
   );

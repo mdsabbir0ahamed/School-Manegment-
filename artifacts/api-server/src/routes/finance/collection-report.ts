@@ -207,6 +207,142 @@ router.get("/finance/collection-report", requireAuth, requireFinance, async (req
   });
 });
 
+// ── GET /finance/collection-report/class-detail ────────────────────────────
+// Student-level drill-down: per-student invoice status for a class + AY.
+
+router.get("/finance/collection-report/class-detail", requireAuth, requireFinance, async (req, res): Promise<void> => {
+  const rawAy   = String(req.query["academicYear"] ?? "");
+  const classId = parseInt(String(req.query["classId"] ?? ""), 10);
+
+  if (!rawAy || !/^\d{4}-\d{2}$/.test(rawAy)) {
+    res.status(400).json({ error: "academicYear required (YYYY-YY)" }); return;
+  }
+  if (isNaN(classId)) {
+    res.status(400).json({ error: "classId required" }); return;
+  }
+
+  const ayStart = parseInt(rawAy.slice(0, 4), 10);
+  const ayEnd   = ayStart + 1;
+
+  // ── Class meta ────────────────────────────────────────────────────────────
+  const [cls] = await db.select().from(classesTable).where(eq(classesTable.id, classId)).limit(1);
+  if (!cls) { res.status(404).json({ error: "CLASS_NOT_FOUND" }); return; }
+
+  // ── Active students in this class ─────────────────────────────────────────
+  const students = await db
+    .select()
+    .from(studentsTable)
+    .where(and(eq(studentsTable.classId, classId), eq(studentsTable.status, "ACTIVE")))
+    .orderBy(studentsTable.lastName, studentsTable.firstName);
+
+  if (!students.length) {
+    res.json({ academicYear: rawAy, classId, className: cls.name, gradeLevel: cls.gradeLevel, students: [], kpis: { totalBilled: 0, totalPaid: 0, outstanding: 0, studentCount: 0, fullyPaidCount: 0, partialCount: 0, unpaidCount: 0, overdueCount: 0 } });
+    return;
+  }
+
+  const studentIds = students.map(s => s.id);
+
+  // ── Invoices for these students in this AY ────────────────────────────────
+  const invoices = await db
+    .select({
+      id:            invoicesTable.id,
+      invoiceNumber: invoicesTable.invoiceNumber,
+      studentId:     invoicesTable.studentId,
+      feeTypeId:     invoicesTable.feeTypeId,
+      month:         invoicesTable.month,
+      totalAmount:   invoicesTable.totalAmount,
+      paidAmount:    invoicesTable.paidAmount,
+      dueDate:       invoicesTable.dueDate,
+      status:        invoicesTable.status,
+    })
+    .from(invoicesTable)
+    .where(
+      and(
+        inArray(invoicesTable.studentId, studentIds),
+        sql`(
+          (EXTRACT(MONTH FROM ${invoicesTable.dueDate}::date) >= 7 AND EXTRACT(YEAR FROM ${invoicesTable.dueDate}::date) = ${ayStart})
+          OR
+          (EXTRACT(MONTH FROM ${invoicesTable.dueDate}::date) < 7  AND EXTRACT(YEAR FROM ${invoicesTable.dueDate}::date) = ${ayEnd})
+        )`,
+      ),
+    )
+    .orderBy(invoicesTable.dueDate);
+
+  // ── Fee type names ────────────────────────────────────────────────────────
+  const ftIds    = [...new Set(invoices.map(i => i.feeTypeId))];
+  const feeTypes = ftIds.length
+    ? await db.select({ id: feeTypesTable.id, name: feeTypesTable.name }).from(feeTypesTable).where(inArray(feeTypesTable.id, ftIds))
+    : [];
+  const ftMap = new Map(feeTypes.map(f => [f.id, f.name]));
+
+  // ── Build per-student result ───────────────────────────────────────────────
+  const invoicesByStudent = new Map<number, typeof invoices>();
+  for (const inv of invoices) {
+    const arr = invoicesByStudent.get(inv.studentId) ?? [];
+    arr.push(inv);
+    invoicesByStudent.set(inv.studentId, arr);
+  }
+
+  const studentRows = students.map(s => {
+    const invs = invoicesByStudent.get(s.id) ?? [];
+    const nonCancelled = invs.filter(i => i.status !== "CANCELLED");
+    const billed    = nonCancelled.reduce((sum, i) => sum + parseFloat(i.totalAmount), 0);
+    const paid      = invs.filter(i => i.status === "PAID").reduce((sum, i) => sum + parseFloat(i.paidAmount), 0);
+    const outstanding = round(billed - paid);
+    const overdueCount = invs.filter(i => i.status === "OVERDUE").length;
+    const paidCount    = invs.filter(i => i.status === "PAID").length;
+    const pendingCount = invs.filter(i => i.status === "PENDING").length;
+
+    let paymentStatus: "FULLY_PAID" | "PARTIAL" | "UNPAID" | "NO_INVOICES";
+    if (nonCancelled.length === 0) paymentStatus = "NO_INVOICES";
+    else if (outstanding <= 0)     paymentStatus = "FULLY_PAID";
+    else if (paid > 0)             paymentStatus = "PARTIAL";
+    else                           paymentStatus = "UNPAID";
+
+    return {
+      studentId:     s.id,
+      studentCode:   s.studentId,
+      studentName:   `${s.firstName} ${s.lastName}`,
+      paymentStatus,
+      invoiceCount:  nonCancelled.length,
+      paidCount,
+      pendingCount,
+      overdueCount,
+      totalBilled:   round(billed),
+      totalPaid:     round(paid),
+      outstanding,
+      invoices: invs.map(i => ({
+        id:            i.id,
+        invoiceNumber: i.invoiceNumber,
+        feeTypeName:   ftMap.get(i.feeTypeId) ?? `Fee #${i.feeTypeId}`,
+        month:         i.month,
+        totalAmount:   parseFloat(i.totalAmount),
+        paidAmount:    parseFloat(i.paidAmount),
+        status:        i.status,
+        dueDate:       i.dueDate,
+      })),
+    };
+  });
+
+  // ── Class-level KPIs ──────────────────────────────────────────────────────
+  const totalBilled    = round(studentRows.reduce((s, r) => s + r.totalBilled, 0));
+  const totalPaid      = round(studentRows.reduce((s, r) => s + r.totalPaid,   0));
+  const outstanding    = round(totalBilled - totalPaid);
+  const fullyPaidCount = studentRows.filter(r => r.paymentStatus === "FULLY_PAID").length;
+  const partialCount   = studentRows.filter(r => r.paymentStatus === "PARTIAL").length;
+  const unpaidCount    = studentRows.filter(r => r.paymentStatus === "UNPAID").length;
+  const overdueCount   = studentRows.filter(r => r.overdueCount > 0).length;
+
+  res.json({
+    academicYear: rawAy,
+    classId,
+    className:  cls.name,
+    gradeLevel: cls.gradeLevel,
+    kpis: { totalBilled, totalPaid, outstanding, studentCount: students.length, fullyPaidCount, partialCount, unpaidCount, overdueCount },
+    students: studentRows,
+  });
+});
+
 function round(n: number) { return Math.round(n * 100) / 100; }
 function zeroKpis(ay: string) {
   return { totalExpected: 0, totalBilled: 0, totalCollected: 0, totalGap: 0, collectionRate: 0, classCount: 0, scheduleCount: 0, academicYear: ay };
