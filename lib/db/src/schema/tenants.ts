@@ -30,6 +30,8 @@ export const tenantsTable = pgTable("tenants", {
   twilioWhatsappFrom: text("twilio_whatsapp_from"),
   smsEnabled: boolean("sms_enabled").default(false),
   whatsappEnabled: boolean("whatsapp_enabled").default(false),
+  attendanceSmsEnabled: boolean("attendance_sms_enabled").default(false),
+  attendanceWhatsappEnabled: boolean("attendance_whatsapp_enabled").default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

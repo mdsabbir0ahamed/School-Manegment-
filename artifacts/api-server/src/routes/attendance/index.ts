@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { attendanceTable, studentsTable, classesTable } from "@workspace/db";
+import {
+  attendanceTable, studentsTable, classesTable, notificationsTable,
+  parentStudentsTable, usersTable, tenantsTable,
+} from "@workspace/db";
 import { eq, and, count, inArray } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import { audit } from "../../lib/audit.js";
@@ -8,6 +11,7 @@ import {
   MarkAttendanceBody, UpdateAttendanceBody,
   ListAttendanceQueryParams, MarkBulkAttendanceBody,
 } from "@workspace/api-zod";
+import { notifyParentBySms, notifyParentsBulk } from "../../lib/notify-parent.js";
 
 const router = Router();
 
@@ -65,16 +69,59 @@ router.get("/attendance", requireAuth, async (req: AuthRequest, res): Promise<vo
   res.json({ records: await Promise.all(records.map(formatAttendance)), total: totalResult[0]?.count ?? 0 });
 });
 
+// ── Helper: notify parent and create in-app notification on absence ────────
+async function handleAbsenceNotifications(studentId: number, date: string): Promise<void> {
+  // Fetch student name for message
+  const [student] = await db
+    .select({ firstName: studentsTable.firstName, lastName: studentsTable.lastName })
+    .from(studentsTable).where(eq(studentsTable.id, studentId)).limit(1);
+  const studentName = student ? `${student.firstName} ${student.lastName}` : `Student #${studentId}`;
+
+  // Fetch tenant name
+  const [tenant] = await db.select({ name: tenantsTable.name }).from(tenantsTable).limit(1);
+  const schoolName = tenant?.name ?? "School ERP";
+
+  const message = `Attendance Alert: ${studentName} was marked ABSENT on ${date}. Please contact the school if this is unexpected. — ${schoolName}`;
+
+  // Fire SMS / WhatsApp (non-blocking — failures are logged, not thrown)
+  void notifyParentBySms({ studentId, message, trigger: "attendance" }).catch(() => undefined);
+
+  // In-app notification to linked parent user (if any)
+  const [linkedParent] = await db
+    .select({ userId: usersTable.id })
+    .from(parentStudentsTable)
+    .innerJoin(usersTable, eq(usersTable.id, parentStudentsTable.parentUserId))
+    .where(eq(parentStudentsTable.studentId, studentId))
+    .limit(1);
+
+  if (linkedParent?.userId) {
+    await db.insert(notificationsTable).values({
+      userId: linkedParent.userId,
+      title: `Attendance Alert — ${studentName}`,
+      message: `${studentName} was marked ABSENT on ${date}.`,
+      type: "WARNING",
+      link: "/attendance",
+    });
+  }
+}
+
 router.post("/attendance", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const role = req.userRole;
   if (role === "ACCOUNTANT" || role === "PARENT" || role === "STUDENT") { res.status(403).json({ error: "FORBIDDEN" }); return; }
   const parsed = MarkAttendanceBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "VALIDATION_ERROR" }); return; }
   const d = parsed.data;
+  const dateStr = toDateStr(d.date as any);
   const [record] = await db.insert(attendanceTable).values({
-    studentId: d.studentId, date: toDateStr(d.date as any), status: d.status,
+    studentId: d.studentId, date: dateStr, status: d.status,
     checkInTime: d.checkInTime ?? null, notes: d.notes ?? null, method: d.method ?? "MANUAL",
   } as any).returning();
+
+  // Fire absence notifications (non-blocking)
+  if (d.status === "ABSENT") {
+    void handleAbsenceNotifications(d.studentId, dateStr).catch(() => undefined);
+  }
+
   res.status(201).json(await formatAttendance(record));
 });
 
@@ -94,12 +141,53 @@ router.post("/attendance/bulk", requireAuth, async (req: AuthRequest, res): Prom
     checkInTime: r.checkInTime ?? null, notes: r.notes ?? null,
     method: method ?? "MANUAL", classId: classId ?? null,
   })) as any).returning();
+
   await audit({
     userId: req.userId, userEmail: req.userEmail, userRole: req.userRole,
     action: "BULK_ATTENDANCE", entity: "attendance",
     description: `Marked attendance for ${inserted.length} students on ${dateStr}`,
     metadata: { date: dateStr, classId, count: inserted.length },
   });
+
+  // Fire absence notifications for all absent students (non-blocking)
+  const absentIds = records.filter(r => r.status === "ABSENT").map(r => r.studentId);
+  if (absentIds.length > 0) {
+    const [tenant] = await db.select({ name: tenantsTable.name }).from(tenantsTable).limit(1);
+    const schoolName = tenant?.name ?? "School ERP";
+
+    // In-app notifications
+    void Promise.allSettled(absentIds.map(async (sid) => {
+      const [student] = await db
+        .select({ firstName: studentsTable.firstName, lastName: studentsTable.lastName })
+        .from(studentsTable).where(eq(studentsTable.id, sid)).limit(1);
+      const studentName = student ? `${student.firstName} ${student.lastName}` : `Student #${sid}`;
+
+      const [linkedParent] = await db
+        .select({ userId: usersTable.id })
+        .from(parentStudentsTable)
+        .innerJoin(usersTable, eq(usersTable.id, parentStudentsTable.parentUserId))
+        .where(eq(parentStudentsTable.studentId, sid))
+        .limit(1);
+
+      if (linkedParent?.userId) {
+        await db.insert(notificationsTable).values({
+          userId: linkedParent.userId,
+          title: `Attendance Alert — ${studentName}`,
+          message: `${studentName} was marked ABSENT on ${dateStr}.`,
+          type: "WARNING",
+          link: "/attendance",
+        });
+      }
+    }));
+
+    // SMS / WhatsApp bulk dispatch (non-blocking)
+    void notifyParentsBulk(
+      absentIds,
+      (name) => `Attendance Alert: ${name} was marked ABSENT on ${dateStr}. Please contact the school if unexpected. — ${schoolName}`,
+      "attendance",
+    ).catch(() => undefined);
+  }
+
   res.status(201).json({ count: inserted.length, records: await Promise.all(inserted.map(formatAttendance)) });
 });
 
@@ -124,6 +212,12 @@ router.put("/attendance/:id", requireAuth, async (req: AuthRequest, res): Promis
   if (d.notes !== undefined) updateFields["notes"] = d.notes;
   const [record] = await db.update(attendanceTable).set(updateFields as any).where(eq(attendanceTable.id, id)).returning();
   if (!record) { res.status(404).json({ error: "NOT_FOUND" }); return; }
+
+  // If status was updated to ABSENT, fire notifications
+  if (d.status === "ABSENT" && record.studentId) {
+    void handleAbsenceNotifications(record.studentId, record.date).catch(() => undefined);
+  }
+
   res.json(await formatAttendance(record));
 });
 

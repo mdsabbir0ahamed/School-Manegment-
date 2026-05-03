@@ -48,6 +48,7 @@ interface SmsSettings {
   twilioAccountSid: string; twilioAuthTokenSet: boolean;
   twilioFromPhone: string; twilioWhatsappFrom: string;
   smsEnabled: boolean; whatsappEnabled: boolean;
+  attendanceSmsEnabled: boolean; attendanceWhatsappEnabled: boolean;
 }
 
 const emptyForm = {
@@ -55,7 +56,7 @@ const emptyForm = {
   logoUrl: "", contactEmail: "", contactPhone: "", address: "", plan: "FREE", isActive: true,
 };
 const emptySmtp = { smtpHost: "", smtpPort: 587, smtpUser: "", smtpPass: "", smtpFrom: "", smtpSecure: false };
-const emptySms = { twilioAccountSid: "", twilioAuthToken: "", twilioFromPhone: "", twilioWhatsappFrom: "", smsEnabled: false, whatsappEnabled: false };
+const emptySms = { twilioAccountSid: "", twilioAuthToken: "", twilioFromPhone: "", twilioWhatsappFrom: "", smsEnabled: false, whatsappEnabled: false, attendanceSmsEnabled: false, attendanceWhatsappEnabled: false };
 
 // ── Collapsible panel shell ───────────────────────────────────────────────
 function SettingsPanel({
@@ -190,7 +191,7 @@ export default function TenantsPage() {
 
   const handleOpenSms = () => {
     setSmsOpen(true);
-    if (smsData) setSms({ twilioAccountSid: smsData.twilioAccountSid, twilioAuthToken: "", twilioFromPhone: smsData.twilioFromPhone, twilioWhatsappFrom: smsData.twilioWhatsappFrom, smsEnabled: smsData.smsEnabled, whatsappEnabled: smsData.whatsappEnabled });
+    if (smsData) setSms({ twilioAccountSid: smsData.twilioAccountSid, twilioAuthToken: "", twilioFromPhone: smsData.twilioFromPhone, twilioWhatsappFrom: smsData.twilioWhatsappFrom, smsEnabled: smsData.smsEnabled, whatsappEnabled: smsData.whatsappEnabled, attendanceSmsEnabled: smsData.attendanceSmsEnabled, attendanceWhatsappEnabled: smsData.attendanceWhatsappEnabled });
   };
 
   // ── Test helpers ─────────────────────────────────────────────────────────
@@ -472,13 +473,47 @@ export default function TenantsPage() {
               </div>
             </div>
 
+            {/* Attendance alerts */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 pb-1">
+                <div className="h-px flex-1 bg-border" />
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Attendance Alerts</p>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Send an automatic message to parents whenever their child is marked <strong>Absent</strong>. These toggles are independent of the payment notification toggles above.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="rounded-lg border border-border p-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Smartphone className="h-4 w-4 text-blue-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium">Absence SMS</p>
+                      <p className="text-xs text-muted-foreground">Uses the SMS From number above</p>
+                    </div>
+                  </div>
+                  <Switch checked={sms.attendanceSmsEnabled} onCheckedChange={v => setSms(p => ({ ...p, attendanceSmsEnabled: v }))} />
+                </div>
+                <div className="rounded-lg border border-border p-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4 text-emerald-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium">Absence WhatsApp</p>
+                      <p className="text-xs text-muted-foreground">Uses the WhatsApp From number above</p>
+                    </div>
+                  </div>
+                  <Switch checked={sms.attendanceWhatsappEnabled} onCheckedChange={v => setSms(p => ({ ...p, attendanceWhatsappEnabled: v }))} />
+                </div>
+              </div>
+            </div>
+
             {/* How it works */}
             <div className="rounded-lg bg-muted/40 p-3 space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">How It Works</p>
               <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
-                <li>When a finance user clicks <strong>Email</strong> on a transaction, the system also sends an SMS/WhatsApp to the parent's phone number if configured.</li>
+                <li><strong>Payment receipts:</strong> when a finance user clicks Email on a transaction, SMS/WhatsApp fires if the payment toggles above are on.</li>
+                <li><strong>Attendance alerts:</strong> when any student is marked Absent (single or bulk), parents receive a message if the attendance toggles are on.</li>
                 <li>Phone resolved from: linked parent user account → student's parent phone field.</li>
-                <li>Message includes student name, amount paid, and receipt number.</li>
                 <li>Get your Twilio credentials at <span className="font-mono">console.twilio.com</span></li>
               </ul>
             </div>

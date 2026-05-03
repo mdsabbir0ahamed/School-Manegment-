@@ -206,6 +206,8 @@ router.get("/tenants/sms-settings", requireAuth, requireSuperAdmin, async (_req,
     twilioWhatsappFrom: tenantsTable.twilioWhatsappFrom,
     smsEnabled: tenantsTable.smsEnabled,
     whatsappEnabled: tenantsTable.whatsappEnabled,
+    attendanceSmsEnabled: tenantsTable.attendanceSmsEnabled,
+    attendanceWhatsappEnabled: tenantsTable.attendanceWhatsappEnabled,
   }).from(tenantsTable).where(eq(tenantsTable.id, 1)).limit(1);
 
   if (!tenant) { res.status(404).json({ error: "NOT_FOUND" }); return; }
@@ -217,16 +219,21 @@ router.get("/tenants/sms-settings", requireAuth, requireSuperAdmin, async (_req,
     twilioWhatsappFrom: tenant.twilioWhatsappFrom ?? "",
     smsEnabled: tenant.smsEnabled ?? false,
     whatsappEnabled: tenant.whatsappEnabled ?? false,
+    attendanceSmsEnabled: tenant.attendanceSmsEnabled ?? false,
+    attendanceWhatsappEnabled: tenant.attendanceWhatsappEnabled ?? false,
   });
 });
 
 router.put("/tenants/sms-settings", requireAuth, requireSuperAdmin, async (req: AuthRequest, res): Promise<void> => {
-  const { twilioAccountSid, twilioAuthToken, twilioFromPhone, twilioWhatsappFrom, smsEnabled, whatsappEnabled } =
-    req.body as {
-      twilioAccountSid?: string; twilioAuthToken?: string;
-      twilioFromPhone?: string; twilioWhatsappFrom?: string;
-      smsEnabled?: boolean; whatsappEnabled?: boolean;
-    };
+  const {
+    twilioAccountSid, twilioAuthToken, twilioFromPhone, twilioWhatsappFrom,
+    smsEnabled, whatsappEnabled, attendanceSmsEnabled, attendanceWhatsappEnabled,
+  } = req.body as {
+    twilioAccountSid?: string; twilioAuthToken?: string;
+    twilioFromPhone?: string; twilioWhatsappFrom?: string;
+    smsEnabled?: boolean; whatsappEnabled?: boolean;
+    attendanceSmsEnabled?: boolean; attendanceWhatsappEnabled?: boolean;
+  };
 
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (twilioAccountSid !== undefined) updates["twilioAccountSid"] = twilioAccountSid || null;
@@ -235,6 +242,8 @@ router.put("/tenants/sms-settings", requireAuth, requireSuperAdmin, async (req: 
   if (twilioWhatsappFrom !== undefined) updates["twilioWhatsappFrom"] = twilioWhatsappFrom || null;
   if (smsEnabled !== undefined) updates["smsEnabled"] = smsEnabled;
   if (whatsappEnabled !== undefined) updates["whatsappEnabled"] = whatsappEnabled;
+  if (attendanceSmsEnabled !== undefined) updates["attendanceSmsEnabled"] = attendanceSmsEnabled;
+  if (attendanceWhatsappEnabled !== undefined) updates["attendanceWhatsappEnabled"] = attendanceWhatsappEnabled;
 
   await db.update(tenantsTable).set(updates as any).where(eq(tenantsTable.id, 1));
 
