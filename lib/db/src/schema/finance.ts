@@ -20,6 +20,12 @@ export const invoiceStatusEnum = pgEnum("invoice_status", [
   "CANCELLED",
 ]);
 
+export const escalationLevelEnum = pgEnum("escalation_level", [
+  "NORMAL",
+  "WARNING",
+  "CRITICAL",
+]);
+
 export const paymentMethodEnum = pgEnum("payment_method", [
   "CASH",
   "BANK_TRANSFER",
@@ -55,6 +61,9 @@ export const invoicesTable = pgTable("invoices", {
     .default("0"),
   dueDate: date("due_date").notNull(),
   status: invoiceStatusEnum("status").notNull().default("PENDING"),
+  escalationLevel: escalationLevelEnum("escalation_level").notNull().default("NORMAL"),
+  escalatedAt: timestamp("escalated_at"),
+  escalationNote: text("escalation_note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

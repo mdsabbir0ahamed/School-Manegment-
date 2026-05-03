@@ -27,7 +27,7 @@ import {
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
   TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
   Target, PencilLine, AlertTriangle, ShieldCheck, BookOpen,
-  Upload, FileText, X, Users,
+  Upload, FileText, X, Users, BellRing, ShieldAlert,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -2055,6 +2055,288 @@ function CollectionReportTab() {
   );
 }
 
+// ── Escalations Tab ─────────────────────────────────────────────────────────
+
+type EscalationItem = {
+  id: number;
+  invoiceNumber: string;
+  dueDate: string;
+  totalAmount: number;
+  paidAmount: number;
+  outstanding: number;
+  daysOverdue: number;
+  escalationLevel: "WARNING" | "CRITICAL";
+  escalatedAt: string | null;
+  escalationNote: string | null;
+  studentId: number;
+  studentName: string;
+  studentCode: string;
+  classId: number;
+  className: string;
+  feeTypeName: string;
+};
+
+type EscalationsData = {
+  summary: { criticalCount: number; warningCount: number; totalAtRisk: number };
+  items: EscalationItem[];
+};
+
+type RunResult = {
+  scanned: number;
+  escalatedToWarning: number;
+  escalatedToCritical: number;
+  alreadyEscalated: number;
+};
+
+function EscalationsTab() {
+  const { toast } = useToast();
+  const [levelFilter, setLevelFilter] = useState<"ALL" | "CRITICAL" | "WARNING">("ALL");
+  const [search, setSearch] = useState("");
+  const [running, setRunning] = useState(false);
+  const [acknowledging, setAcknowledging] = useState<number | null>(null);
+
+  const qkey = ["escalations", levelFilter];
+  const { data, isLoading, refetch } = useQuery<EscalationsData>({
+    queryKey: qkey,
+    queryFn: async () => {
+      const qs = levelFilter !== "ALL" ? `?level=${levelFilter}` : "";
+      return authedFetch(`/api/finance/escalations${qs}`);
+    },
+  });
+
+  const filteredItems = (data?.items ?? []).filter(i =>
+    !search || i.studentName.toLowerCase().includes(search.toLowerCase()) || i.studentCode.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  async function runEscalation() {
+    setRunning(true);
+    try {
+      const result: RunResult = await authedFetch("/api/finance/escalations/run", { method: "POST" });
+      toast({
+        title: "Escalation check complete",
+        description: `Scanned ${result.scanned} overdue invoices — ${result.escalatedToCritical} → CRITICAL, ${result.escalatedToWarning} → WARNING, ${result.alreadyEscalated} already escalated`,
+      });
+      refetch();
+    } catch {
+      toast({ title: "Run failed", description: "Could not complete escalation check", variant: "destructive" });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function acknowledge(id: number) {
+    setAcknowledging(id);
+    try {
+      await authedFetch(`/api/finance/escalations/${id}/acknowledge`, { method: "PATCH" });
+      toast({ title: "Acknowledged", description: "Invoice escalation cleared" });
+      refetch();
+    } catch {
+      toast({ title: "Failed", description: "Could not acknowledge escalation", variant: "destructive" });
+    } finally {
+      setAcknowledging(null);
+    }
+  }
+
+  const s = data?.summary;
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <BellRing className="h-5 w-5 text-red-500" /> Overdue Escalations
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Invoices auto-escalated to WARNING (&gt;7 days) or CRITICAL (&gt;30 days) overdue
+          </p>
+        </div>
+        <Button onClick={runEscalation} disabled={running} className="gap-2 bg-red-600 hover:bg-red-700 text-white">
+          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          Run Escalation Check
+        </Button>
+      </div>
+
+      {/* KPI strip */}
+      {isLoading ? (
+        <div className="grid grid-cols-3 gap-4">
+          {[0, 1, 2].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
+        </div>
+      ) : s && (
+        <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+            <div className="flex items-center gap-2 text-red-600 mb-1">
+              <ShieldAlert className="h-4 w-4" />
+              <span className="text-xs font-medium uppercase tracking-wide">Critical</span>
+            </div>
+            <p className="text-3xl font-bold text-red-700 tabular-nums">{s.criticalCount}</p>
+            <p className="text-xs text-red-500 mt-1">30+ days overdue</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-center gap-2 text-amber-600 mb-1">
+              <AlertTriangle className="h-4 w-4" />
+              <span className="text-xs font-medium uppercase tracking-wide">Warning</span>
+            </div>
+            <p className="text-3xl font-bold text-amber-700 tabular-nums">{s.warningCount}</p>
+            <p className="text-xs text-amber-500 mt-1">7–30 days overdue</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Receipt className="h-4 w-4" />
+              <span className="text-xs font-medium uppercase tracking-wide">Total at Risk</span>
+            </div>
+            <p className="text-3xl font-bold tabular-nums">৳{s.totalAtRisk.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground mt-1">{s.criticalCount + s.warningCount} escalated invoices</p>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="flex gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-48">
+          <Input
+            placeholder="Search student name or ID…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-3 text-sm h-9"
+          />
+        </div>
+        <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+          {(["ALL", "CRITICAL", "WARNING"] as const).map(lvl => (
+            <button
+              key={lvl}
+              onClick={() => setLevelFilter(lvl)}
+              className={cn(
+                "px-4 py-1.5 font-medium transition-colors",
+                levelFilter === lvl
+                  ? lvl === "CRITICAL" ? "bg-red-600 text-white"
+                    : lvl === "WARNING" ? "bg-amber-500 text-white"
+                    : "bg-primary text-primary-foreground"
+                  : "bg-background text-muted-foreground hover:bg-muted",
+              )}
+            >
+              {lvl}
+            </button>
+          ))}
+        </div>
+        <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5 h-9">
+          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+        </Button>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-xl border border-border overflow-hidden">
+        {/* Column headers */}
+        <div className="grid grid-cols-[1.5fr_1fr_1fr_90px_90px_90px_100px_auto] gap-0 border-b border-border/50 px-4 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider bg-muted/30">
+          <span>Student / Invoice</span>
+          <span>Class</span>
+          <span>Fee Type</span>
+          <span className="text-right">Amount</span>
+          <span className="text-right">Outstanding</span>
+          <span className="text-right">Days Late</span>
+          <span className="text-center">Level</span>
+          <span className="text-center">Action</span>
+        </div>
+
+        {isLoading ? (
+          <div className="divide-y divide-border/50">
+            {[0, 1, 2, 4].map(i => (
+              <div key={i} className="grid grid-cols-[1.5fr_1fr_1fr_90px_90px_90px_100px_auto] gap-0 px-4 py-3">
+                {[1.5, 1, 1, 0.8, 0.8, 0.7, 0.9, 0.8].map((w, j) => (
+                  <Skeleton key={j} className="h-4 rounded" style={{ width: `${w * 60}px` }} />
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+            <ShieldCheck className="h-10 w-10 text-green-400" />
+            <p className="font-medium text-green-700">No escalated invoices</p>
+            <p className="text-sm">All overdue invoices are within threshold — or run a check to update escalation levels.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border/50">
+            {filteredItems.map(item => (
+              <div
+                key={item.id}
+                className={cn(
+                  "grid grid-cols-[1.5fr_1fr_1fr_90px_90px_90px_100px_auto] gap-0 px-4 py-3 items-center transition-colors hover:bg-muted/20",
+                  item.escalationLevel === "CRITICAL" ? "bg-red-50/60" : "bg-amber-50/40",
+                )}
+              >
+                {/* Student */}
+                <div>
+                  <p className="text-sm font-medium leading-tight">{item.studentName}</p>
+                  <p className="text-[11px] text-muted-foreground">{item.studentCode} · {item.invoiceNumber}</p>
+                </div>
+                {/* Class */}
+                <span className="text-sm text-muted-foreground">{item.className}</span>
+                {/* Fee Type */}
+                <span className="text-sm text-muted-foreground">{item.feeTypeName}</span>
+                {/* Amount */}
+                <span className="text-right text-sm tabular-nums">৳{item.totalAmount.toLocaleString()}</span>
+                {/* Outstanding */}
+                <span className={cn("text-right text-sm font-semibold tabular-nums",
+                  item.escalationLevel === "CRITICAL" ? "text-red-700" : "text-amber-700"
+                )}>
+                  ৳{item.outstanding.toLocaleString()}
+                </span>
+                {/* Days late */}
+                <span className={cn("text-right text-sm font-bold tabular-nums",
+                  item.daysOverdue >= 30 ? "text-red-700" : "text-amber-700"
+                )}>
+                  {item.daysOverdue}d
+                </span>
+                {/* Level badge */}
+                <div className="flex justify-center">
+                  <span className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide",
+                    item.escalationLevel === "CRITICAL"
+                      ? "bg-red-100 text-red-700"
+                      : "bg-amber-100 text-amber-700",
+                  )}>
+                    {item.escalationLevel === "CRITICAL"
+                      ? <ShieldAlert className="h-2.5 w-2.5" />
+                      : <AlertTriangle className="h-2.5 w-2.5" />}
+                    {item.escalationLevel}
+                  </span>
+                </div>
+                {/* Acknowledge */}
+                <div className="flex justify-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-green-700 hover:bg-green-50"
+                    onClick={() => acknowledge(item.id)}
+                    disabled={acknowledging === item.id}
+                    title="Acknowledge — reset escalation level"
+                  >
+                    {acknowledging === item.id
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <CheckCheck className="h-3.5 w-3.5" />}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Footer */}
+        {!isLoading && filteredItems.length > 0 && (
+          <div className="grid grid-cols-[1.5fr_1fr_1fr_90px_90px_90px_100px_auto] gap-0 border-t border-border bg-muted/30 px-4 py-3 text-sm font-semibold">
+            <span className="text-muted-foreground">{filteredItems.length} invoice{filteredItems.length !== 1 ? "s" : ""}</span>
+            <span /><span /><span />
+            <span className="text-right tabular-nums text-red-700">
+              ৳{filteredItems.reduce((s, i) => s + i.outstanding, 0).toLocaleString()}
+            </span>
+            <span /><span /><span />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Budget Tab ─────────────────────────────────────────────────────────────
 
 type BudgetRow = {
@@ -3773,6 +4055,9 @@ export default function FinancePage() {
           <TabsTrigger value="collection-report" className="flex items-center gap-1.5">
             <BarChart3 className="h-3.5 w-3.5" /> Collection Report
           </TabsTrigger>
+          <TabsTrigger value="escalations" className="flex items-center gap-1.5 data-[state=active]:text-red-600">
+            <BellRing className="h-3.5 w-3.5" /> Escalations
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -3944,6 +4229,11 @@ export default function FinancePage() {
         {/* ── Collection Report tab ── */}
         <TabsContent value="collection-report" className="mt-4">
           <CollectionReportTab />
+        </TabsContent>
+
+        {/* ── Escalations tab ── */}
+        <TabsContent value="escalations" className="mt-4">
+          <EscalationsTab />
         </TabsContent>
       </Tabs>
 

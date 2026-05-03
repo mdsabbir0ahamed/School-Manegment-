@@ -1,7 +1,84 @@
 import { db } from "@workspace/db";
 import { invoicesTable, notificationsTable, studentsTable, usersTable, parentStudentsTable } from "@workspace/db";
-import { eq, and, lt, sql, inArray } from "drizzle-orm";
+import { eq, and, lt, ne, sql, inArray } from "drizzle-orm";
 import { logger } from "./logger.js";
+
+const WARNING_DAYS = 7;
+const CRITICAL_DAYS = 30;
+
+function daysOverdueFrom(dueDateStr: string): number {
+  const due = new Date(dueDateStr);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.floor((today.getTime() - due.getTime()) / 86_400_000);
+}
+
+async function runEscalationCheck(): Promise<void> {
+  const overdueInvoices = await db
+    .select({
+      id: invoicesTable.id,
+      invoiceNumber: invoicesTable.invoiceNumber,
+      studentId: invoicesTable.studentId,
+      totalAmount: invoicesTable.totalAmount,
+      paidAmount: invoicesTable.paidAmount,
+      dueDate: invoicesTable.dueDate,
+      escalationLevel: invoicesTable.escalationLevel,
+    })
+    .from(invoicesTable)
+    .where(eq(invoicesTable.status, "OVERDUE"));
+
+  if (!overdueInvoices.length) return;
+
+  const studentIds = [...new Set(overdueInvoices.map(i => i.studentId))];
+  const students = await db
+    .select({ id: studentsTable.id, firstName: studentsTable.firstName, lastName: studentsTable.lastName })
+    .from(studentsTable)
+    .where(inArray(studentsTable.id, studentIds));
+  const studentMap = new Map(students.map(s => [s.id, `${s.firstName} ${s.lastName}`]));
+
+  const staffUsers = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(eq(usersTable.isActive, true), sql`${usersTable.role} IN ('SUPER_ADMIN', 'ACCOUNTANT')`));
+
+  let escalated = 0;
+  for (const inv of overdueInvoices) {
+    const days = daysOverdueFrom(inv.dueDate);
+    const studentName = studentMap.get(inv.studentId) ?? `Student #${inv.studentId}`;
+    let newLevel: "WARNING" | "CRITICAL" | null = null;
+
+    if (days >= CRITICAL_DAYS && inv.escalationLevel !== "CRITICAL") {
+      newLevel = "CRITICAL";
+    } else if (days >= WARNING_DAYS && inv.escalationLevel === "NORMAL") {
+      newLevel = "WARNING";
+    }
+
+    if (newLevel) {
+      await db.update(invoicesTable).set({
+        escalationLevel: newLevel,
+        escalatedAt: new Date(),
+        escalationNote: `Auto-escalated to ${newLevel}: ${days} days overdue`,
+        updatedAt: new Date(),
+      }).where(eq(invoicesTable.id, inv.id));
+
+      const outstanding = parseFloat(inv.totalAmount) - parseFloat(inv.paidAmount);
+      for (const user of staffUsers) {
+        await db.insert(notificationsTable).values({
+          userId: user.id,
+          title: `Invoice Escalated to ${newLevel}`,
+          message: `${inv.invoiceNumber} — ${studentName} — ৳${outstanding.toLocaleString()} | ${days} days overdue`,
+          type: newLevel === "CRITICAL" ? "DANGER" : "WARNING",
+          link: "/finance",
+        });
+      }
+      escalated++;
+    }
+  }
+
+  if (escalated > 0) {
+    logger.info({ escalated }, "Cron: escalation check completed");
+  }
+}
 
 export async function sendInvoiceReminder(invoiceId: number): Promise<{
   parentNotified: boolean;
@@ -181,13 +258,18 @@ async function markOverdueInvoices(): Promise<void> {
   }
 }
 
+async function markAndEscalate(): Promise<void> {
+  await markOverdueInvoices();
+  await runEscalationCheck();
+}
+
 export function startOverdueCron(): void {
-  markOverdueInvoices().catch(err => logger.error({ err }, "Overdue cron failed"));
+  markAndEscalate().catch(err => logger.error({ err }, "Overdue cron failed"));
 
   const SIX_HOURS = 6 * 60 * 60 * 1000;
   setInterval(() => {
-    markOverdueInvoices().catch(err => logger.error({ err }, "Overdue cron failed"));
+    markAndEscalate().catch(err => logger.error({ err }, "Overdue cron failed"));
   }, SIX_HOURS);
 
-  logger.info("Overdue invoice cron started (runs every 6 hours)");
+  logger.info("Overdue invoice cron started (runs every 6 hours, with escalation check)");
 }
