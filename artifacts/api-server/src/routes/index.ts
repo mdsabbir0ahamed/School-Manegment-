@@ -28,6 +28,7 @@ import expensesRouter from "./finance/expenses.js";
 import pnlRouter from "./finance/pnl.js";
 import budgetsRouter from "./finance/budgets.js";
 import feeSchedulesRouter from "./finance/fee-schedules.js";
+import collectionReportRouter from "./finance/collection-report.js";
 import parentFeeStatementRouter from "./parent/fee-statement.js";
 import parentPaymentRequestsRouter from "./parent/payment-requests.js";
 
@@ -62,6 +63,7 @@ router.use(expensesRouter);
 router.use(pnlRouter);
 router.use(budgetsRouter);
 router.use(feeSchedulesRouter);
+router.use(collectionReportRouter);
 router.use(parentFeeStatementRouter);
 router.use(parentPaymentRequestsRouter);
 

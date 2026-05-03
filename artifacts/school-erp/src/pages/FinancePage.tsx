@@ -1492,6 +1492,298 @@ function FeeSchedulesTab() {
   );
 }
 
+// ── Collection Report Tab ──────────────────────────────────────────────────
+
+type FeeTypeBreakdown = {
+  feeTypeId: number; feeTypeName: string; scheduleAmount: number;
+  studentCount: number; expected: number; billed: number;
+  invoiceCount: number; collected: number; gap: number; collectionRate: number;
+};
+type ClassCollection = {
+  classId: number; className: string; gradeLevel: number; studentCount: number;
+  expected: number; billed: number; collected: number; gap: number;
+  collectionRate: number; byFeeType: FeeTypeBreakdown[];
+};
+type CollectionKpis = {
+  totalExpected: number; totalBilled: number; totalCollected: number;
+  totalGap: number; collectionRate: number; classCount: number; scheduleCount: number;
+};
+type CollectionReport = { academicYear: string; kpis: CollectionKpis; byClass: ClassCollection[] };
+
+function rateColor(rate: number) {
+  if (rate >= 90) return "text-green-600";
+  if (rate >= 60) return "text-amber-600";
+  return "text-red-600";
+}
+function rateBg(rate: number) {
+  if (rate >= 90) return "bg-green-500";
+  if (rate >= 60) return "bg-amber-400";
+  return "bg-red-500";
+}
+
+function CollectionReportTab() {
+  const { toast } = useToast();
+  const [academicYear, setAcademicYear] = useState(currentAcademicYear());
+  const [expanded, setExpanded]         = useState<Set<number>>(new Set());
+
+  const now = new Date();
+  const curStart = (now.getMonth() + 1) >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  const yearOptions = [-2, -1, 0, 1].map(d => {
+    const s = curStart + d;
+    return `${s}-${String(s + 1).slice(-2)}`;
+  });
+
+  const { data, isLoading, isError, refetch } = useQuery<CollectionReport>({
+    queryKey: ["collection-report", academicYear],
+    queryFn: () => authedFetch(`/api/finance/collection-report?academicYear=${academicYear}`),
+    retry: false,
+  });
+
+  const toggleExpand = (classId: number) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(classId)) next.delete(classId); else next.add(classId);
+      return next;
+    });
+  };
+  const expandAll   = () => setExpanded(new Set(data?.byClass.map(c => c.classId) ?? []));
+  const collapseAll = () => setExpanded(new Set());
+
+  const handleExportReport = async () => {
+    if (!data) return;
+    const token = localStorage.getItem("erp_token") ?? "";
+    const res = await fetch(`/api/finance/fee-schedules/export?academicYear=${academicYear}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) { toast({ title: "Export failed", variant: "destructive" }); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `collection-report-${academicYear}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const k = data?.kpis;
+  const chartData = (data?.byClass ?? []).map(c => ({
+    name: c.className.replace("Class ", "Cls "),
+    expected:  c.expected,
+    billed:    c.billed,
+    collected: c.collected,
+    gap:       c.gap,
+  }));
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Fee Collection Report</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={academicYear} onValueChange={setAcademicYear}>
+            <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {yearOptions.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" onClick={() => refetch()}>
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleExportReport} disabled={!data}>
+            <Download className="mr-1.5 h-3.5 w-3.5" /> Export
+          </Button>
+        </div>
+      </div>
+
+      {isLoading && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-24 rounded-xl border border-border animate-pulse bg-muted" />
+          ))}
+        </div>
+      )}
+
+      {isError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-8 text-center">
+          <AlertCircle className="h-8 w-8 mx-auto mb-2 text-red-400" />
+          <p className="text-sm font-medium text-red-700">Failed to load report</p>
+          <Button size="sm" variant="outline" className="mt-3" onClick={() => refetch()}>Retry</Button>
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* KPI Cards */}
+          {k && (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {[
+                { label: "Expected Revenue", value: `৳${k.totalExpected.toLocaleString()}`, sub: `${k.scheduleCount} fee schedule${k.scheduleCount !== 1 ? "s" : ""}`, color: "text-indigo-600" },
+                { label: "Total Billed", value: `৳${k.totalBilled.toLocaleString()}`, sub: "invoices issued", color: "text-blue-600" },
+                { label: "Collected", value: `৳${k.totalCollected.toLocaleString()}`, sub: "payments received", color: "text-green-600" },
+                { label: "Outstanding Gap", value: `৳${k.totalGap.toLocaleString()}`, sub: "expected vs collected", color: k.totalGap > 0 ? "text-red-600" : "text-green-600" },
+                { label: "Collection Rate", value: `${k.collectionRate.toFixed(1)}%`, sub: `${k.classCount} class${k.classCount !== 1 ? "es" : ""}`, color: rateColor(k.collectionRate) },
+              ].map(card => (
+                <div key={card.label} className="rounded-xl border border-border bg-card p-4 space-y-1">
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{card.label}</p>
+                  <p className={cn("text-xl font-bold tabular-nums", card.color)}>{card.value}</p>
+                  <p className="text-[11px] text-muted-foreground">{card.sub}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Chart */}
+          {chartData.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-4">
+              <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Expected vs Collected by Class</p>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={chartData} barGap={2} barCategoryGap="25%">
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `৳${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number, n: string) => [`৳${Number(v).toLocaleString()}`, n.charAt(0).toUpperCase() + n.slice(1)]} />
+                  <Bar dataKey="expected"  name="Expected"  fill="hsl(239 84% 67% / 0.25)" radius={[3,3,0,0]} stroke="hsl(239 84% 67%)" strokeWidth={1} />
+                  <Bar dataKey="billed"    name="Billed"    fill="hsl(217 91% 60% / 0.4)"  radius={[3,3,0,0]} />
+                  <Bar dataKey="collected" name="Collected" fill="hsl(142 71% 45% / 0.8)"  radius={[3,3,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Per-class breakdown table */}
+          {data.byClass.length === 0 ? (
+            <div className="rounded-lg border border-border bg-card py-14 text-center">
+              <BarChart3 className="h-10 w-10 mx-auto mb-3 opacity-20" />
+              <p className="text-sm font-medium">No active fee schedules for {academicYear}</p>
+              <p className="text-xs text-muted-foreground mt-1">Set up class fee schedules first to see the collection report</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border px-4 py-2.5 bg-muted/30">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Class Breakdown — {academicYear}</p>
+                <div className="flex items-center gap-2">
+                  <button onClick={expandAll}   className="text-xs text-indigo-600 hover:underline">Expand all</button>
+                  <span className="text-muted-foreground text-xs">/</span>
+                  <button onClick={collapseAll} className="text-xs text-indigo-600 hover:underline">Collapse all</button>
+                </div>
+              </div>
+
+              {/* Column headers */}
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1.5fr_28px] gap-0 border-b border-border/50 px-4 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                <span>Class / Fee Type</span>
+                <span className="text-right">Students</span>
+                <span className="text-right">Expected</span>
+                <span className="text-right">Billed</span>
+                <span className="text-right">Collected</span>
+                <span className="text-right">Gap</span>
+                <span className="text-right">Rate</span>
+                <span />
+              </div>
+
+              <div className="divide-y divide-border/50">
+                {data.byClass.map(cls => {
+                  const isOpen = expanded.has(cls.classId);
+                  return (
+                    <div key={cls.classId}>
+                      {/* Class row */}
+                      <button
+                        onClick={() => toggleExpand(cls.classId)}
+                        className="w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1.5fr_28px] gap-0 px-4 py-3 text-sm hover:bg-muted/20 transition-colors text-left items-center"
+                      >
+                        <span className="flex items-center gap-2 font-semibold">
+                          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">
+                            {cls.gradeLevel}
+                          </span>
+                          {cls.className}
+                        </span>
+                        <span className="text-right text-muted-foreground tabular-nums">{cls.studentCount}</span>
+                        <span className="text-right tabular-nums font-medium">৳{cls.expected.toLocaleString()}</span>
+                        <span className="text-right tabular-nums text-blue-600">৳{cls.billed.toLocaleString()}</span>
+                        <span className="text-right tabular-nums text-green-600 font-semibold">৳{cls.collected.toLocaleString()}</span>
+                        <span className={cn("text-right tabular-nums font-semibold text-xs", cls.gap > 0 ? "text-red-600" : "text-green-600")}>
+                          {cls.gap > 0 ? `-৳${cls.gap.toLocaleString()}` : "৳0"}
+                        </span>
+                        <span className="flex items-center justify-end gap-1.5">
+                          <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div className={cn("h-full rounded-full transition-all", rateBg(cls.collectionRate))}
+                              style={{ width: `${Math.min(cls.collectionRate, 100)}%` }} />
+                          </div>
+                          <span className={cn("text-xs font-bold tabular-nums w-10 text-right", rateColor(cls.collectionRate))}>
+                            {cls.collectionRate.toFixed(1)}%
+                          </span>
+                        </span>
+                        <span className="flex justify-center">
+                          <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", isOpen && "rotate-90")} />
+                        </span>
+                      </button>
+
+                      {/* Fee type sub-rows */}
+                      {isOpen && (
+                        <div className="border-t border-border/30 bg-muted/10 divide-y divide-border/30">
+                          {cls.byFeeType.map(ft => (
+                            <div key={ft.feeTypeId}
+                              className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1.5fr_28px] gap-0 px-4 py-2.5 text-xs items-center">
+                              <span className="flex items-center gap-2 pl-7 text-muted-foreground">
+                                <Tag className="h-3 w-3 shrink-0" />
+                                <span>{ft.feeTypeName}</span>
+                                <span className="text-[10px] bg-muted rounded px-1">৳{ft.scheduleAmount.toLocaleString()}/student</span>
+                              </span>
+                              <span className="text-right tabular-nums text-muted-foreground">{ft.studentCount}</span>
+                              <span className="text-right tabular-nums">৳{ft.expected.toLocaleString()}</span>
+                              <span className="text-right tabular-nums text-blue-600">
+                                ৳{ft.billed.toLocaleString()}
+                                {ft.invoiceCount > 0 && <span className="text-muted-foreground ml-1">({ft.invoiceCount})</span>}
+                              </span>
+                              <span className="text-right tabular-nums text-green-600">৳{ft.collected.toLocaleString()}</span>
+                              <span className={cn("text-right tabular-nums", ft.gap > 0 ? "text-red-500" : "text-green-500")}>
+                                {ft.gap > 0 ? `-৳${ft.gap.toLocaleString()}` : "৳0"}
+                              </span>
+                              <span className="flex items-center justify-end gap-1.5">
+                                <div className="w-16 h-1 rounded-full bg-muted overflow-hidden">
+                                  <div className={cn("h-full rounded-full", rateBg(ft.collectionRate))}
+                                    style={{ width: `${Math.min(ft.collectionRate, 100)}%` }} />
+                                </div>
+                                <span className={cn("text-[10px] font-semibold tabular-nums w-10 text-right", rateColor(ft.collectionRate))}>
+                                  {ft.collectionRate.toFixed(1)}%
+                                </span>
+                              </span>
+                              <span />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer totals */}
+              {k && (
+                <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1.5fr_28px] gap-0 border-t border-border bg-muted/30 px-4 py-3 text-sm font-semibold">
+                  <span className="text-muted-foreground">Total ({k.classCount} classes)</span>
+                  <span />
+                  <span className="text-right tabular-nums">৳{k.totalExpected.toLocaleString()}</span>
+                  <span className="text-right tabular-nums text-blue-700">৳{k.totalBilled.toLocaleString()}</span>
+                  <span className="text-right tabular-nums text-green-700">৳{k.totalCollected.toLocaleString()}</span>
+                  <span className={cn("text-right tabular-nums text-xs", k.totalGap > 0 ? "text-red-700" : "text-green-700")}>
+                    {k.totalGap > 0 ? `-৳${k.totalGap.toLocaleString()}` : "৳0"}
+                  </span>
+                  <span className={cn("text-right tabular-nums", rateColor(k.collectionRate))}>
+                    {k.collectionRate.toFixed(1)}%
+                  </span>
+                  <span />
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Budget Tab ─────────────────────────────────────────────────────────────
 
 type BudgetRow = {
@@ -3207,6 +3499,9 @@ export default function FinancePage() {
           <TabsTrigger value="fee-schedules" className="flex items-center gap-1.5">
             <BookOpen className="h-3.5 w-3.5" /> Fee Schedules
           </TabsTrigger>
+          <TabsTrigger value="collection-report" className="flex items-center gap-1.5">
+            <BarChart3 className="h-3.5 w-3.5" /> Collection Report
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -3373,6 +3668,11 @@ export default function FinancePage() {
         {/* ── Fee Schedules tab ── */}
         <TabsContent value="fee-schedules" className="mt-4">
           <FeeSchedulesTab />
+        </TabsContent>
+
+        {/* ── Collection Report tab ── */}
+        <TabsContent value="collection-report" className="mt-4">
+          <CollectionReportTab />
         </TabsContent>
       </Tabs>
 
