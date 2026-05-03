@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { classFeeSchedulesTable, classesTable, feeTypesTable, usersTable } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import { audit } from "../../lib/audit.js";
@@ -144,6 +144,65 @@ router.delete("/finance/fee-schedules/:id", requireAuth, requireFinance, async (
   });
 
   res.status(204).end();
+});
+
+// ── GET /finance/fee-schedules/export ─────────────────────────────────────
+
+router.get("/finance/fee-schedules/export", requireAuth, requireFinance, async (req, res): Promise<void> => {
+  const { academicYear, classId } = req.query as Record<string, string>;
+
+  const conditions = [];
+  if (academicYear) conditions.push(eq(classFeeSchedulesTable.academicYear, academicYear));
+  if (classId)      conditions.push(eq(classFeeSchedulesTable.classId, parseInt(classId, 10)));
+
+  const rows = await db
+    .select()
+    .from(classFeeSchedulesTable)
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(classFeeSchedulesTable.academicYear, classFeeSchedulesTable.classId, classFeeSchedulesTable.feeTypeId);
+
+  // Build lookup maps with a single query each
+  const classIds   = [...new Set(rows.map(r => r.classId))];
+  const feeTypeIds = [...new Set(rows.map(r => r.feeTypeId))];
+
+  const classes = classIds.length
+    ? await db.select({ id: classesTable.id, name: classesTable.name, gradeLevel: classesTable.gradeLevel })
+        .from(classesTable).where(inArray(classesTable.id, classIds))
+    : [];
+  const feeTypes = feeTypeIds.length
+    ? await db.select({ id: feeTypesTable.id, name: feeTypesTable.name, defaultAmount: feeTypesTable.amount })
+        .from(feeTypesTable).where(inArray(feeTypesTable.id, feeTypeIds))
+    : [];
+
+  const classMap   = new Map(classes.map(c => [c.id, c]));
+  const feeTypeMap = new Map(feeTypes.map(f => [f.id, f]));
+
+  const header = "className,feeTypeName,academicYear,amount,defaultAmount,isActive,notes,gradeLevel";
+  const csvLines = rows.map(r => {
+    const cls = classMap.get(r.classId);
+    const ft  = feeTypeMap.get(r.feeTypeId);
+    const escape = (s: string) => s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
+    return [
+      escape(cls?.name ?? `Class #${r.classId}`),
+      escape(ft?.name ?? `Fee #${r.feeTypeId}`),
+      r.academicYear,
+      r.amount,
+      ft?.defaultAmount ?? "",
+      r.isActive ? "true" : "false",
+      escape(r.notes ?? ""),
+      cls?.gradeLevel ?? "",
+    ].join(",");
+  });
+
+  const ay = academicYear ?? "all";
+  const filename = `fee-schedules-${ay}.csv`;
+  const csv = [header, ...csvLines].join("\r\n");
+
+  logger.info({ rows: rows.length, academicYear, classId }, "Fee schedules exported");
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(csv);
 });
 
 // ── POST /finance/fee-schedules/import ────────────────────────────────────

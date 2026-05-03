@@ -1238,6 +1238,7 @@ function FeeSchedulesTab() {
   const qc = useQueryClient();
   const [addOpen, setAddOpen]         = useState(false);
   const [importOpen, setImportOpen]   = useState(false);
+  const [exporting, setExporting]     = useState(false);
   const [yearFilter, setYearFilter]   = useState(currentAcademicYear());
   const [classFilter, setClassFilter] = useState("all");
   const [togglingId, setTogglingId]   = useState<number | null>(null);
@@ -1267,6 +1268,31 @@ function FeeSchedulesTab() {
   });
 
   const refetchAll = () => { refetch(); qc.invalidateQueries({ queryKey: ["fee-schedules"] }); };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const token = localStorage.getItem("erp_token") ?? "";
+      const params = new URLSearchParams({ academicYear: yearFilter });
+      if (classFilter !== "all") params.set("classId", classFilter);
+      const res = await fetch(`/api/finance/fee-schedules/export?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fee-schedules-${yearFilter}${classFilter !== "all" ? `-class${classFilter}` : ""}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: "Export ready", description: `fee-schedules-${yearFilter}.csv downloaded` });
+    } catch (e: any) {
+      toast({ title: "Export failed", description: e.message, variant: "destructive" });
+    } finally { setExporting(false); }
+  };
 
   const toggleActive = async (s: FeeSchedule) => {
     setTogglingId(s.id);
@@ -1313,6 +1339,11 @@ function FeeSchedulesTab() {
           <h2 className="text-sm font-semibold">Class Fee Schedules</h2>
         </div>
         <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={handleExport} disabled={exporting}>
+            {exporting
+              ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Exporting…</>
+              : <><Download className="mr-1.5 h-3.5 w-3.5" />Export CSV</>}
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
             <Upload className="mr-1.5 h-3.5 w-3.5" /> Import CSV
           </Button>
