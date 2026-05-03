@@ -146,6 +146,71 @@ router.delete("/finance/fee-schedules/:id", requireAuth, requireFinance, async (
   res.status(204).end();
 });
 
+// ── POST /finance/fee-schedules/import ────────────────────────────────────
+
+router.post("/finance/fee-schedules/import", requireAuth, requireFinance, async (req: AuthRequest, res): Promise<void> => {
+  const { rows, academicYear: defaultYear } = req.body as {
+    rows?: Array<{ className: string; feeTypeName: string; academicYear?: string; amount: number; notes?: string }>;
+    academicYear?: string;
+  };
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    res.status(400).json({ error: "rows array is required and must not be empty" }); return;
+  }
+  if (rows.length > 500) {
+    res.status(400).json({ error: "Maximum 500 rows per import" }); return;
+  }
+
+  // Pre-load lookup maps
+  const allClasses  = await db.select({ id: classesTable.id, name: classesTable.name }).from(classesTable);
+  const allFeeTypes = await db.select({ id: feeTypesTable.id, name: feeTypesTable.name }).from(feeTypesTable);
+
+  const classMap   = new Map(allClasses.map(c => [c.name.trim().toLowerCase(), c.id]));
+  const feeTypeMap = new Map(allFeeTypes.map(f => [f.name.trim().toLowerCase(), f.id]));
+
+  const imported: number[] = [];
+  const errors: Array<{ row: number; reason: string }> = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    const rowNum = i + 1;
+
+    const classId   = classMap.get(r.className?.trim().toLowerCase() ?? "");
+    const feeTypeId = feeTypeMap.get(r.feeTypeName?.trim().toLowerCase() ?? "");
+    const ay        = (r.academicYear?.trim() || defaultYear)?.trim() ?? "";
+    const amount    = Number(r.amount);
+
+    if (!classId)            { errors.push({ row: rowNum, reason: `Class "${r.className}" not found` }); continue; }
+    if (!feeTypeId)          { errors.push({ row: rowNum, reason: `Fee type "${r.feeTypeName}" not found` }); continue; }
+    if (!ay || !/^\d{4}-\d{2}$/.test(ay)) { errors.push({ row: rowNum, reason: `Academic year "${ay}" invalid (use e.g. 2025-26)` }); continue; }
+    if (isNaN(amount) || amount < 0) { errors.push({ row: rowNum, reason: `Amount "${r.amount}" invalid` }); continue; }
+
+    try {
+      const [schedule] = await db
+        .insert(classFeeSchedulesTable)
+        .values({ classId, feeTypeId, academicYear: ay, amount: String(amount), notes: r.notes?.trim() || null, createdByUserId: req.userId! })
+        .onConflictDoUpdate({
+          target: [classFeeSchedulesTable.classId, classFeeSchedulesTable.feeTypeId, classFeeSchedulesTable.academicYear],
+          set: { amount: String(amount), notes: r.notes?.trim() || null, isActive: true, updatedAt: new Date() },
+        })
+        .returning({ id: classFeeSchedulesTable.id });
+      imported.push(schedule.id);
+    } catch (err) {
+      errors.push({ row: rowNum, reason: "Database error — duplicate or constraint violation" });
+    }
+  }
+
+  await audit({
+    userId: req.userId, userEmail: req.userEmail, userRole: req.userRole,
+    action: "IMPORT", entity: "class_fee_schedule", entityId: 0,
+    description: `Bulk imported ${imported.length} fee schedules (${errors.length} errors)`,
+    metadata: { imported: imported.length, errors: errors.length },
+  });
+
+  logger.info({ imported: imported.length, errors: errors.length }, "Fee schedules bulk import complete");
+  res.json({ imported: imported.length, errors, total: rows.length });
+});
+
 // ── Exported helper: look up class-specific fee amount ─────────────────────
 
 export async function getScheduledAmount(

@@ -27,6 +27,7 @@ import {
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
   TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
   Target, PencilLine, AlertTriangle, ShieldCheck, BookOpen,
+  Upload, FileText, X,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -808,6 +809,305 @@ function currentAcademicYear(): string {
   return `${start}-${String(start + 1).slice(-2)}`;
 }
 
+// ── CSV helpers ────────────────────────────────────────────────────────────
+
+type CsvRow = {
+  className: string; feeTypeName: string; academicYear: string;
+  amount: string; notes: string;
+  _valid: boolean; _error: string;
+};
+
+function parseCsv(raw: string, defaultYear: string): CsvRow[] {
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+  if (!lines.length) return [];
+
+  // Detect if first line is a header
+  const firstLower = lines[0]!.toLowerCase();
+  const hasHeader = firstLower.includes("class") || firstLower.includes("fee");
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+
+  return dataLines.map(line => {
+    const cols = line.split(",").map(c => c.trim());
+    const [className = "", feeTypeName = "", ayOrAmount = "", amountOrNotes = "", notesRaw = ""] = cols;
+
+    // Detect if col3 is a year (2025-26) or an amount
+    const col3IsYear = /^\d{4}-\d{2}$/.test(ayOrAmount);
+    const academicYear = col3IsYear ? ayOrAmount : defaultYear;
+    const amount       = col3IsYear ? amountOrNotes : ayOrAmount;
+    const notes        = col3IsYear ? notesRaw : amountOrNotes;
+
+    const amountNum = parseFloat(amount);
+    let _error = "";
+    if (!className) _error = "Class name is empty";
+    else if (!feeTypeName) _error = "Fee type name is empty";
+    else if (!academicYear || !/^\d{4}-\d{2}$/.test(academicYear)) _error = `Academic year "${academicYear}" invalid`;
+    else if (isNaN(amountNum) || amountNum < 0) _error = `Amount "${amount}" invalid`;
+
+    return { className, feeTypeName, academicYear, amount, notes, _valid: !_error, _error };
+  });
+}
+
+const CSV_TEMPLATE = `# className,feeTypeName,academicYear,amount,notes
+# OR: className,feeTypeName,amount  (academic year defaults to the year above)
+Class One,Tuition Fee,2025-26,4500,
+Class One,Exam Fee,2025-26,600,Reduced rate
+Class Five,Tuition Fee,2025-26,5500,
+Class Five,Exam Fee,2025-26,1000,`;
+
+// ── Import CSV dialog ──────────────────────────────────────────────────────
+
+type ImportResult = { imported: number; errors: Array<{ row: number; reason: string }>; total: number };
+
+function ImportSchedulesDialog({ open, onClose, onImported }: {
+  open: boolean; onClose: () => void; onImported: () => void;
+}) {
+  const { toast }      = useToast();
+  const [step, setStep]       = useState<"input" | "preview" | "result">("input");
+  const [csv, setCsv]         = useState("");
+  const [defaultYear, setDY]  = useState(currentAcademicYear());
+  const [rows, setRows]       = useState<CsvRow[]>([]);
+  const [result, setResult]   = useState<ImportResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fileRef = useState<HTMLInputElement | null>(null);
+
+  const reset = () => { setCsv(""); setRows([]); setResult(null); setStep("input"); };
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setCsv((ev.target?.result as string) ?? "");
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handlePreview = () => {
+    const parsed = parseCsv(csv, defaultYear);
+    if (!parsed.length) { toast({ title: "No rows found in CSV", variant: "destructive" }); return; }
+    setRows(parsed); setStep("preview");
+  };
+
+  const validRows = rows.filter(r => r._valid);
+  const invalidRows = rows.filter(r => !r._valid);
+
+  const handleImport = async () => {
+    if (!validRows.length) { toast({ title: "No valid rows to import", variant: "destructive" }); return; }
+    setLoading(true);
+    try {
+      const res: ImportResult = await authedFetch("/api/finance/fee-schedules/import", {
+        method: "POST",
+        body: JSON.stringify({
+          academicYear: defaultYear,
+          rows: validRows.map(r => ({
+            className: r.className, feeTypeName: r.feeTypeName,
+            academicYear: r.academicYear, amount: parseFloat(r.amount),
+            notes: r.notes || undefined,
+          })),
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      setResult(res); setStep("result");
+      if (res.imported > 0) onImported();
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Upload className="h-4 w-4" /> Import Fee Schedules from CSV
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Paste a CSV or upload a file to bulk-set class fee amounts for an academic year.
+          </p>
+        </DialogHeader>
+
+        {/* Step indicators */}
+        <div className="flex items-center gap-2 text-xs mt-1">
+          {(["input", "preview", "result"] as const).map((s, i) => (
+            <div key={s} className="flex items-center gap-2">
+              {i > 0 && <div className="h-px w-6 bg-border" />}
+              <div className={cn(
+                "flex items-center gap-1 px-2 py-0.5 rounded-full font-medium",
+                step === s ? "bg-indigo-100 text-indigo-700" : "text-muted-foreground"
+              )}>
+                <span className="h-4 w-4 text-[10px] flex items-center justify-center rounded-full border border-current">{i + 1}</span>
+                {s.charAt(0).toUpperCase() + s.slice(1)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {/* ── STEP 1: Input ── */}
+          {step === "input" && (
+            <div className="space-y-3 py-1">
+              <div className="grid grid-cols-2 gap-3 items-end">
+                <div className="space-y-1.5">
+                  <Label>Default Academic Year</Label>
+                  <Input placeholder="e.g. 2025-26" value={defaultYear} onChange={e => setDY(e.target.value)} />
+                  <p className="text-[10px] text-muted-foreground">Used for rows that don't include a year column.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Upload CSV file</Label>
+                  <div className="flex items-center gap-2">
+                    <input ref={r => fileRef[1](r)} type="file" accept=".csv,text/csv,.txt" className="hidden" onChange={handleFileChange} />
+                    <Button variant="outline" size="sm" onClick={() => fileRef[0]?.click()}>
+                      <FileText className="mr-1.5 h-3.5 w-3.5" /> Choose file…
+                    </Button>
+                    {csv && <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> File loaded</span>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label>CSV Content</Label>
+                  <button onClick={() => setCsv(CSV_TEMPLATE)}
+                    className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+                    <FileText className="h-3 w-3" /> Load template
+                  </button>
+                </div>
+                <textarea
+                  className="w-full h-52 font-mono text-xs rounded-md border border-input bg-background px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                  placeholder={"className,feeTypeName,academicYear,amount,notes\nClass One,Tuition Fee,2025-26,4500,\nClass Five,Exam Fee,2025-26,1000,Grade 10 rate"}
+                  value={csv} onChange={e => setCsv(e.target.value)}
+                />
+              </div>
+
+              {/* Format reference */}
+              <div className="rounded-md bg-muted/50 border border-border p-3 text-xs space-y-1">
+                <p className="font-semibold text-foreground">Accepted formats:</p>
+                <p className="font-mono text-muted-foreground">className, feeTypeName, academicYear, amount [, notes]</p>
+                <p className="font-mono text-muted-foreground">className, feeTypeName, amount [, notes] <span className="font-sans italic">← year is inferred from the field above</span></p>
+                <p className="text-muted-foreground mt-1">Lines starting with <code>#</code> are treated as comments and skipped. Existing schedules are updated in-place.</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── STEP 2: Preview ── */}
+          {step === "preview" && (
+            <div className="space-y-3 py-1">
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1 text-green-700 font-semibold">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {validRows.length} valid
+                </span>
+                {invalidRows.length > 0 && (
+                  <span className="flex items-center gap-1 text-red-600 font-semibold">
+                    <AlertCircle className="h-3.5 w-3.5" /> {invalidRows.length} with errors (will be skipped)
+                  </span>
+                )}
+                <span className="text-muted-foreground ml-auto">{rows.length} total rows</span>
+              </div>
+
+              <div className="rounded-lg border border-border overflow-auto max-h-[44vh]">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+                    <tr>
+                      {["#", "Class", "Fee Type", "Year", "Amount (৳)", "Notes", "Status"].map(h => (
+                        <th key={h} className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {rows.map((r, i) => (
+                      <tr key={i} className={cn("hover:bg-muted/20", !r._valid && "bg-red-50/60")}>
+                        <td className="px-3 py-2 text-muted-foreground tabular-nums">{i + 1}</td>
+                        <td className="px-3 py-2 font-medium">{r.className || <span className="text-red-500 italic">empty</span>}</td>
+                        <td className="px-3 py-2">{r.feeTypeName || <span className="text-red-500 italic">empty</span>}</td>
+                        <td className="px-3 py-2 tabular-nums">{r.academicYear}</td>
+                        <td className="px-3 py-2 tabular-nums font-semibold">
+                          {r._valid ? `৳${parseFloat(r.amount).toLocaleString()}` : r.amount}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground max-w-[120px]">
+                          <span className="line-clamp-1">{r.notes || "—"}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          {r._valid
+                            ? <span className="flex items-center gap-1 text-green-600"><CheckCircle2 className="h-3 w-3" /> OK</span>
+                            : <span className="flex items-center gap-1 text-red-600" title={r._error}><AlertCircle className="h-3 w-3" /> {r._error}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {invalidRows.length > 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-3 py-2">
+                  Rows with errors will be skipped. Only the {validRows.length} valid row{validRows.length !== 1 ? "s" : ""} will be imported.
+                  Go back to fix the CSV if needed.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── STEP 3: Result ── */}
+          {step === "result" && result && (
+            <div className="py-6 space-y-4">
+              <div className="flex flex-col items-center text-center gap-3">
+                {result.imported > 0
+                  ? <CheckCircle2 className="h-12 w-12 text-green-500" />
+                  : <AlertCircle className="h-12 w-12 text-amber-500" />}
+                <div>
+                  <p className="text-lg font-semibold">
+                    {result.imported > 0 ? `${result.imported} schedule${result.imported !== 1 ? "s" : ""} imported` : "Nothing imported"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {result.imported} of {result.total} rows saved successfully.
+                    {result.errors.length > 0 && ` ${result.errors.length} row${result.errors.length !== 1 ? "s" : ""} failed.`}
+                  </p>
+                </div>
+              </div>
+              {result.errors.length > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1 max-h-40 overflow-y-auto">
+                  <p className="text-xs font-semibold text-red-700 mb-1">Import errors:</p>
+                  {result.errors.map(e => (
+                    <p key={e.row} className="text-xs text-red-600">Row {e.row}: {e.reason}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="pt-2 border-t border-border">
+          {step === "input" && (
+            <>
+              <Button variant="outline" onClick={handleClose}>Cancel</Button>
+              <Button onClick={handlePreview} disabled={!csv.trim()}>
+                Preview <ChevronRight className="ml-1.5 h-3.5 w-3.5" />
+              </Button>
+            </>
+          )}
+          {step === "preview" && (
+            <>
+              <Button variant="outline" onClick={() => setStep("input")}>
+                <ChevronLeft className="mr-1.5 h-3.5 w-3.5" /> Back
+              </Button>
+              <Button onClick={handleImport} disabled={loading || !validRows.length}>
+                {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Importing…</> : <><Upload className="mr-2 h-4 w-4" />Import {validRows.length} row{validRows.length !== 1 ? "s" : ""}</>}
+              </Button>
+            </>
+          )}
+          {step === "result" && (
+            <>
+              <Button variant="outline" onClick={() => { reset(); }}>Import More</Button>
+              <Button onClick={handleClose}>Done</Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── AddSchedule dialog ─────────────────────────────────────────────────────
+
 function AddScheduleDialog({ open, onClose, onCreated }: {
   open: boolean; onClose: () => void; onCreated: () => void;
 }) {
@@ -937,6 +1237,7 @@ function FeeSchedulesTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [addOpen, setAddOpen]         = useState(false);
+  const [importOpen, setImportOpen]   = useState(false);
   const [yearFilter, setYearFilter]   = useState(currentAcademicYear());
   const [classFilter, setClassFilter] = useState("all");
   const [togglingId, setTogglingId]   = useState<number | null>(null);
@@ -1011,9 +1312,14 @@ function FeeSchedulesTab() {
           <BookOpen className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">Class Fee Schedules</h2>
         </div>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Set Fee Schedule
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+            <Upload className="mr-1.5 h-3.5 w-3.5" /> Import CSV
+          </Button>
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Set Fee Schedule
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -1150,6 +1456,7 @@ function FeeSchedulesTab() {
       )}
 
       <AddScheduleDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={refetchAll} />
+      <ImportSchedulesDialog open={importOpen} onClose={() => setImportOpen(false)} onImported={refetchAll} />
     </div>
   );
 }
