@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
+import { usersTable, studentsTable, classesTable } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { hashPassword } from "../../lib/auth.js";
 import { audit } from "../../lib/audit.js";
@@ -77,6 +77,71 @@ router.put("/users/:id", requireAuth, requireAdmin, async (req: AuthRequest, res
   });
   res.json({ id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName,
     phoneNumber: user.phoneNumber, role: user.role, isActive: user.isActive, createdAt: user.createdAt.toISOString() });
+});
+
+// ── Linked Student Record (STUDENT role) ────────────────────────────────────
+
+router.get("/users/:id/linked-student", requireAuth, requireAdmin, async (req: AuthRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params["id"]), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "BAD_REQUEST" }); return; }
+
+  const [user] = await db.select({ linkedStudentId: usersTable.linkedStudentId })
+    .from(usersTable).where(eq(usersTable.id, id)).limit(1);
+  if (!user) { res.status(404).json({ error: "NOT_FOUND" }); return; }
+  if (!user.linkedStudentId) { res.json({ student: null }); return; }
+
+  const [student] = await db.select({
+    id: studentsTable.id, studentId: studentsTable.studentId,
+    firstName: studentsTable.firstName, lastName: studentsTable.lastName,
+    status: studentsTable.status, classId: studentsTable.classId,
+  }).from(studentsTable).where(eq(studentsTable.id, user.linkedStudentId)).limit(1);
+
+  if (!student) { res.json({ student: null }); return; }
+
+  let className: string | null = null;
+  if (student.classId) {
+    const [cls] = await db.select({ name: classesTable.name })
+      .from(classesTable).where(eq(classesTable.id, student.classId)).limit(1);
+    className = cls?.name ?? null;
+  }
+
+  res.json({ student: { ...student, className } });
+});
+
+router.put("/users/:id/linked-student", requireAuth, requireAdmin, async (req: AuthRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params["id"]), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "BAD_REQUEST" }); return; }
+
+  const studentId: number | null = req.body.studentId ?? null;
+
+  const [user] = await db.select({ role: usersTable.role })
+    .from(usersTable).where(eq(usersTable.id, id)).limit(1);
+  if (!user) { res.status(404).json({ error: "NOT_FOUND" }); return; }
+  if (user.role !== "STUDENT") { res.status(400).json({ error: "BAD_REQUEST", message: "User is not a STUDENT" }); return; }
+
+  if (studentId !== null) {
+    const [conflict] = await db.select({ id: usersTable.id })
+      .from(usersTable).where(eq(usersTable.linkedStudentId, studentId)).limit(1);
+    if (conflict && conflict.id !== id) {
+      res.status(409).json({ error: "CONFLICT", message: "This student record is already linked to another user account" });
+      return;
+    }
+  }
+
+  await db.update(usersTable)
+    .set({ linkedStudentId: studentId, updatedAt: new Date() })
+    .where(eq(usersTable.id, id));
+
+  await audit({
+    userId: req.userId!, userEmail: req.userEmail!, userRole: req.userRole!,
+    action: "UPDATE", entity: "user", entityId: id,
+    description: studentId
+      ? `Linked student record #${studentId} to user account #${id}`
+      : `Unlinked student record from user account #${id}`,
+    metadata: { linkedStudentId: studentId },
+  });
+
+  res.json({ success: true, linkedStudentId: studentId });
 });
 
 router.delete("/users/:id", requireAuth, requireAdmin, async (req: AuthRequest, res): Promise<void> => {

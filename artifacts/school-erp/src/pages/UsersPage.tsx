@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   Plus, Pencil, Trash2, Loader2, Link2, Unlink, Users, Search,
-  GraduationCap,
+  GraduationCap, UserCheck,
 } from "lucide-react";
 
 const ROLES = ["SUPER_ADMIN", "TEACHER", "ACCOUNTANT", "PARENT", "STUDENT"] as const;
@@ -37,9 +37,194 @@ interface ParentLink {
   className?: string | null; status: string;
 }
 
+interface LinkedStudent {
+  id: number; studentId: string; firstName: string; lastName: string;
+  status: string; className?: string | null;
+}
+
 const RELATIONSHIPS = ["PARENT", "GUARDIAN", "GRANDPARENT", "SIBLING", "OTHER"] as const;
 
-// ── Linked Students Panel ───────────────────────────────────────────────────
+// ── Linked Student Panel (STUDENT role — one-to-one) ────────────────────────
+
+function LinkedStudentPanel({ studentUser }: { studentUser: User }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [selectedStudentId, setSelectedStudentId] = useState<string>("");
+  const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
+
+  const { data, isLoading, refetch } = useQuery<{ student: LinkedStudent | null }>({
+    queryKey: ["user-linked-student", studentUser.id],
+    queryFn: () => customFetch(`/api/users/${studentUser.id}/linked-student`),
+  });
+
+  const { data: studentsData } = useListStudents({ limit: 300, offset: 0 });
+
+  const alreadyLinkedId = data?.student?.id;
+  const availableStudents = (studentsData?.students ?? []).filter(s =>
+    s.id !== alreadyLinkedId &&
+    (`${s.firstName} ${s.lastName}`.toLowerCase().includes(search.toLowerCase()) ||
+     s.studentId.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const handleLink = async () => {
+    if (!selectedStudentId) return;
+    setSaving(true);
+    try {
+      await customFetch(`/api/users/${studentUser.id}/linked-student`, {
+        method: "PUT",
+        body: JSON.stringify({ studentId: parseInt(selectedStudentId) }),
+      });
+      toast({ title: "Student record linked successfully" });
+      refetch();
+      qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
+      setLinkOpen(false);
+      setSelectedStudentId("");
+      setSearch("");
+    } catch (err: any) {
+      toast({ title: err?.data?.error ?? err?.data?.message ?? "Failed to link student", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUnlink = async () => {
+    if (!confirm(`Remove the student record link for ${studentUser.firstName} ${studentUser.lastName}? They will lose access to their portal data.`)) return;
+    setUnlinking(true);
+    try {
+      await customFetch(`/api/users/${studentUser.id}/linked-student`, {
+        method: "PUT",
+        body: JSON.stringify({ studentId: null }),
+      });
+      toast({ title: "Student record unlinked" });
+      refetch();
+      qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
+    } catch {
+      toast({ title: "Failed to unlink", variant: "destructive" });
+    } finally {
+      setUnlinking(false);
+    }
+  };
+
+  const linked = data?.student;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+          <GraduationCap className="h-3.5 w-3.5" /> Linked Student Record
+        </p>
+        {!linked && (
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLinkOpen(true)}>
+            <Link2 className="h-3 w-3 mr-1" /> Link Record
+          </Button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <Skeleton className="h-14" />
+      ) : !linked ? (
+        <div className="rounded-lg border border-dashed border-border px-4 py-5 text-center text-xs text-muted-foreground">
+          <GraduationCap className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          <p>No student record linked</p>
+          <p className="mt-0.5 opacity-70">This user won't see data in their Student Portal until linked.</p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700 shrink-0">
+              {linked.firstName[0]}{linked.lastName[0]}
+            </div>
+            <div>
+              <p className="text-xs font-medium">{linked.firstName} {linked.lastName}</p>
+              <p className="text-[10px] text-muted-foreground font-mono">
+                {linked.studentId} · {linked.className ?? "No class"} ·{" "}
+                <span className={cn(
+                  "font-sans",
+                  linked.status === "ACTIVE" ? "text-green-600" : "text-gray-400"
+                )}>{linked.status}</span>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLinkOpen(true)}>
+              <Pencil className="h-3 w-3 mr-1" /> Change
+            </Button>
+            <button
+              onClick={handleUnlink}
+              disabled={unlinking}
+              className="p-1 text-muted-foreground hover:text-destructive rounded disabled:opacity-50"
+              title="Remove link"
+            >
+              {unlinking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        Linking a student record lets <strong>{studentUser.firstName} {studentUser.lastName}</strong> view their attendance, exam results, and timetable in the Student Portal.
+      </p>
+
+      {/* Link / Change dialog */}
+      <Dialog open={linkOpen} onOpenChange={open => { setLinkOpen(open); if (!open) { setSearch(""); setSelectedStudentId(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{linked ? "Change Linked Student" : "Link Student Record"}</DialogTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Choose the student record for <strong>{studentUser.firstName} {studentUser.lastName}</strong>.
+            </p>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Search Students</Label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Name or student ID…"
+                  className="pl-8 text-xs h-8"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Select Student Record *</Label>
+              <Select value={selectedStudentId} onValueChange={setSelectedStudentId}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Choose student…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableStudents.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      {search ? "No matches found" : "No students available"}
+                    </div>
+                  ) : availableStudents.slice(0, 50).map(s => (
+                    <SelectItem key={s.id} value={String(s.id)} className="text-xs">
+                      {s.firstName} {s.lastName} — {s.studentId}
+                      {s.className ? ` (${s.className})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setLinkOpen(false)}>Cancel</Button>
+            <Button size="sm" onClick={handleLink} disabled={!selectedStudentId || saving}>
+              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              <Link2 className="mr-1.5 h-3.5 w-3.5" /> {linked ? "Change Link" : "Link Record"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Linked Students Panel (PARENT role — one-to-many) ───────────────────────
 
 function LinkedStudentsPanel({ parentUser }: { parentUser: User }) {
   const { toast } = useToast();
@@ -273,6 +458,7 @@ function UserFormDialog({ user, open, onClose }: { user?: User; open: boolean; o
 
   const isPending = createMutation.isPending || updateMutation.isPending;
   const showLinkedStudents = user && (watchedRole === "PARENT" || currentRole === "PARENT");
+  const showLinkedStudentRecord = user && (watchedRole === "STUDENT" || currentRole === "STUDENT");
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -282,6 +468,9 @@ function UserFormDialog({ user, open, onClose }: { user?: User; open: boolean; o
             {user ? "Edit User" : "Create User"}
             {(watchedRole === "PARENT" || currentRole === "PARENT") && (
               <Badge variant="outline" className="text-xs font-normal">Parent Account</Badge>
+            )}
+            {(watchedRole === "STUDENT" || currentRole === "STUDENT") && (
+              <Badge variant="outline" className="text-xs font-normal bg-indigo-50 text-indigo-600 border-indigo-200">Student Account</Badge>
             )}
           </DialogTitle>
         </DialogHeader>
@@ -339,6 +528,13 @@ function UserFormDialog({ user, open, onClose }: { user?: User; open: boolean; o
             <LinkedStudentsPanel parentUser={user!} />
           </div>
         )}
+
+        {/* Linked Student Record section — only for existing STUDENT users */}
+        {showLinkedStudentRecord && (
+          <div className="border-t pt-4 mt-2">
+            <LinkedStudentPanel studentUser={user!} />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -390,6 +586,11 @@ export default function UsersPage() {
             <Link2 className="h-3.5 w-3.5" /> Click edit on any parent to manage their linked students
           </span>
         )}
+        {roleFilter === "STUDENT" && (
+          <span className="text-xs text-muted-foreground flex items-center gap-1">
+            <GraduationCap className="h-3.5 w-3.5" /> Click the cap icon to link a student record to their portal
+          </span>
+        )}
       </div>
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -434,12 +635,17 @@ export default function UsersPage() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1">
-                    <button onClick={() => { setEditUser(u); setFormOpen(true); }} className="p-1 text-muted-foreground hover:text-foreground rounded" title={u.role === "PARENT" ? "Edit & manage linked students" : "Edit user"}>
+                    <button onClick={() => { setEditUser(u); setFormOpen(true); }} className="p-1 text-muted-foreground hover:text-foreground rounded" title={u.role === "PARENT" ? "Edit & manage linked students" : u.role === "STUDENT" ? "Edit & link student record" : "Edit user"}>
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                     {u.role === "PARENT" && (
                       <button onClick={() => { setEditUser(u); setFormOpen(true); }} className="p-1 text-muted-foreground hover:text-primary rounded" title="Manage linked students">
                         <Users className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {u.role === "STUDENT" && (
+                      <button onClick={() => { setEditUser(u); setFormOpen(true); }} className="p-1 text-muted-foreground hover:text-indigo-600 rounded" title="Link student record">
+                        <UserCheck className="h-3.5 w-3.5" />
                       </button>
                     )}
                     <button onClick={() => handleDelete(u)} className="p-1 text-muted-foreground hover:text-destructive rounded">
