@@ -2218,6 +2218,437 @@ type RunResult = {
 
 type ThresholdSettings = { warningDays: number; criticalDays: number; updatedAt?: string };
 
+// ── Health Analytics types ─────────────────────────────────────────────────
+
+type MonthlyTrendPoint = {
+  label: string; year: number; month: number;
+  billed: number; collected: number; outstanding: number;
+  collectionRate: number; invoiceCount: number;
+};
+
+type TopDebtor = {
+  studentId: number; name: string;
+  outstanding: number; overdueCount: number; pendingCount: number;
+};
+
+type FeeTypeBreakdownItem = {
+  feeTypeId: number; name: string;
+  billed: number; collected: number; outstanding: number;
+  collectionRate: number; invoiceCount: number;
+};
+
+type AgingBucket = { bucket: string; count: number; outstanding: number };
+
+type HealthSnapshot = {
+  totalBilled: number; totalCollected: number; totalOutstanding: number;
+  overallCollectionRate: number;
+  overdueCount: number; pendingCount: number; paidCount: number; cancelledCount: number;
+};
+
+type HealthAnalyticsData = {
+  monthlyTrend: MonthlyTrendPoint[];
+  topDebtors: TopDebtor[];
+  feeTypeBreakdown: FeeTypeBreakdownItem[];
+  agingBuckets: AgingBucket[];
+  snapshot: HealthSnapshot;
+  generatedAt: string;
+};
+
+// ── COLORS ─────────────────────────────────────────────────────────────────
+const CHART_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#14b8a6", "#f97316", "#8b5cf6", "#06b6d4"];
+
+function HealthTab() {
+  const { data, isLoading, refetch } = useQuery<HealthAnalyticsData>({
+    queryKey: ["finance-health-analytics"],
+    queryFn: () => authedFetch("/api/finance/health-analytics"),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const fmt = (n: number) => `৳${Math.round(n).toLocaleString()}`;
+  const pct = (n: number) => `${n.toFixed(1)}%`;
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded-lg border border-border bg-white shadow-lg p-3 text-xs min-w-[150px]">
+        <p className="font-semibold mb-2">{label}</p>
+        {payload.map((p: any) => (
+          <div key={p.name} className="flex justify-between gap-4 mb-0.5">
+            <span style={{ color: p.color }}>{p.name}</span>
+            <span className="font-mono font-medium">
+              {p.name === "Rate %" ? `${Number(p.value).toFixed(1)}%` : `৳${Number(p.value).toLocaleString()}`}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const AgingTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded-lg border border-border bg-white shadow-lg p-3 text-xs min-w-[170px]">
+        <p className="font-semibold mb-2">{label}</p>
+        {payload.map((p: any) => (
+          <div key={p.name} className="flex justify-between gap-4 mb-0.5">
+            <span style={{ color: p.color }}>{p.name}</span>
+            <span className="font-mono font-medium">
+              {p.name === "Invoices" ? p.value : fmt(p.value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  if (isLoading) return (
+    <div className="space-y-4 mt-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="rounded-lg border bg-muted animate-pulse h-24" />
+        ))}
+      </div>
+      <div className="rounded-lg border bg-muted animate-pulse h-64" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="rounded-lg border bg-muted animate-pulse h-64" />
+        <div className="rounded-lg border bg-muted animate-pulse h-64" />
+      </div>
+    </div>
+  );
+
+  const snap = data?.snapshot;
+  const trend = data?.monthlyTrend ?? [];
+  const debtors = data?.topDebtors ?? [];
+  const feeTypes = data?.feeTypeBreakdown ?? [];
+  const aging = data?.agingBuckets ?? [];
+
+  const rateColor = (r: number) =>
+    r >= 90 ? "text-green-600" : r >= 70 ? "text-yellow-600" : "text-red-600";
+
+  const agingColors: Record<string, string> = {
+    "Not yet due": "#6366f1",
+    "1-30 days":   "#f59e0b",
+    "31-60 days":  "#f97316",
+    "61-90 days":  "#ef4444",
+    "90+ days":    "#991b1b",
+  };
+
+  const agingOutstandingTotal = aging.reduce((s, b) => s + b.outstanding, 0);
+
+  return (
+    <div className="space-y-5 mt-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold">Financial Health Dashboard</h2>
+          {data?.generatedAt && (
+            <span className="text-[10px] text-muted-foreground">
+              Updated {new Date(data.generatedAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => refetch()}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <RefreshCw className="h-3 w-3" /> Refresh
+        </button>
+      </div>
+
+      {/* ── Snapshot KPIs ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          {
+            label: "Overall Collection Rate",
+            value: pct(snap?.overallCollectionRate ?? 0),
+            sub: `৳${Math.round(snap?.totalCollected ?? 0).toLocaleString()} of ৳${Math.round(snap?.totalBilled ?? 0).toLocaleString()}`,
+            cls: rateColor(snap?.overallCollectionRate ?? 0),
+            icon: TrendingUp,
+          },
+          {
+            label: "Total Outstanding",
+            value: fmt(snap?.totalOutstanding ?? 0),
+            sub: `${snap?.overdueCount ?? 0} overdue · ${snap?.pendingCount ?? 0} pending`,
+            cls: (snap?.totalOutstanding ?? 0) > 0 ? "text-red-600" : "text-green-600",
+            icon: AlertCircle,
+          },
+          {
+            label: "Invoices Paid",
+            value: String(snap?.paidCount ?? 0),
+            sub: `${snap?.cancelledCount ?? 0} cancelled`,
+            cls: "text-green-600",
+            icon: CheckCircle2,
+          },
+          {
+            label: "Total Billed",
+            value: fmt(snap?.totalBilled ?? 0),
+            sub: `${(snap?.paidCount ?? 0) + (snap?.overdueCount ?? 0) + (snap?.pendingCount ?? 0)} active invoices`,
+            cls: "text-indigo-600",
+            icon: Receipt,
+          },
+        ].map(s => {
+          const Icon = s.icon;
+          return (
+            <div key={s.label} className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">{s.label}</p>
+                <Icon className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <p className={cn("text-xl font-bold tabular-nums", s.cls)}>{s.value}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">{s.sub}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Monthly collection trend ── */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+          12-Month Collection Trend
+        </h3>
+        {trend.every(m => m.billed === 0) ? (
+          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
+            <BarChart3 className="h-8 w-8 opacity-20 mb-2" />
+            <p className="text-sm">No invoice data in the last 12 months</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <ComposedChart data={trend} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis
+                yAxisId="amt"
+                tickFormatter={v => `৳${(v / 1000).toFixed(0)}k`}
+                tick={{ fontSize: 10 }}
+                axisLine={false} tickLine={false} width={55}
+              />
+              <YAxis
+                yAxisId="rate"
+                orientation="right"
+                tickFormatter={v => `${v}%`}
+                domain={[0, 100]}
+                tick={{ fontSize: 10 }}
+                axisLine={false} tickLine={false} width={40}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar yAxisId="amt" dataKey="billed"    name="Billed"    fill="#e0e7ff" radius={[3,3,0,0]} />
+              <Bar yAxisId="amt" dataKey="collected" name="Collected" fill="#6366f1" radius={[3,3,0,0]} />
+              <Line
+                yAxisId="rate"
+                type="monotone"
+                dataKey="collectionRate"
+                name="Rate %"
+                stroke="#22c55e"
+                strokeWidth={2}
+                dot={{ r: 3, fill: "#22c55e" }}
+                activeDot={{ r: 5 }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* ── Overdue aging buckets ── */}
+        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Overdue Aging Analysis
+          </h3>
+
+          {aging.every(b => b.count === 0) ? (
+            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
+              <CheckCircle2 className="h-7 w-7 opacity-20 mb-2 text-green-500" />
+              <p className="text-sm">No outstanding invoices</p>
+            </div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={aging} margin={{ top: 4, right: 4, bottom: 4, left: 4 }} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                  <XAxis
+                    type="number"
+                    tickFormatter={v => `৳${(v / 1000).toFixed(0)}k`}
+                    tick={{ fontSize: 9 }} axisLine={false} tickLine={false}
+                  />
+                  <YAxis
+                    type="category" dataKey="bucket"
+                    tick={{ fontSize: 9 }} axisLine={false} tickLine={false} width={72}
+                  />
+                  <Tooltip content={<AgingTooltip />} />
+                  <Bar dataKey="outstanding" name="Outstanding" radius={[0,3,3,0]}>
+                    {aging.map(b => (
+                      <Cell key={b.bucket} fill={agingColors[b.bucket] ?? "#94a3b8"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+
+              <div className="space-y-1.5">
+                {aging.filter(b => b.count > 0).map(b => {
+                  const pctOfTotal = agingOutstandingTotal > 0
+                    ? Math.round((b.outstanding / agingOutstandingTotal) * 100)
+                    : 0;
+                  return (
+                    <div key={b.bucket} className="flex items-center gap-2 text-xs">
+                      <span
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{ background: agingColors[b.bucket] ?? "#94a3b8" }}
+                      />
+                      <span className="text-muted-foreground w-24 shrink-0">{b.bucket}</span>
+                      <span className="font-medium tabular-nums">{fmt(b.outstanding)}</span>
+                      <span className="text-muted-foreground ml-auto">{b.count} inv · {pctOfTotal}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Fee type breakdown ── */}
+        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Fee Type Breakdown
+          </h3>
+
+          {feeTypes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
+              <BarChart3 className="h-7 w-7 opacity-20 mb-2" />
+              <p className="text-sm">No fee type data</p>
+            </div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie
+                    data={feeTypes}
+                    dataKey="billed"
+                    nameKey="name"
+                    cx="50%" cy="50%"
+                    outerRadius={70}
+                    innerRadius={38}
+                    strokeWidth={1}
+                  >
+                    {feeTypes.map((ft, i) => (
+                      <Cell key={ft.feeTypeId} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(v: number, name: string) => [`৳${Math.round(v).toLocaleString()}`, name]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {feeTypes.map((ft, i) => (
+                  <div key={ft.feeTypeId} className="flex items-center gap-2 text-xs">
+                    <span
+                      className="h-2 w-2 rounded-full shrink-0"
+                      style={{ background: CHART_COLORS[i % CHART_COLORS.length] }}
+                    />
+                    <span className="text-muted-foreground flex-1 truncate" title={ft.name}>{ft.name}</span>
+                    <span className="font-medium tabular-nums shrink-0">{fmt(ft.billed)}</span>
+                    <span
+                      className={cn("text-[10px] font-semibold shrink-0 w-10 text-right tabular-nums", rateColor(ft.collectionRate))}
+                    >
+                      {pct(ft.collectionRate)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Top debtors ── */}
+      {debtors.length > 0 && (
+        <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Users className="h-3.5 w-3.5 text-muted-foreground" />
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Top Debtors
+            </h3>
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              by outstanding balance
+            </span>
+          </div>
+
+          {/* Bar chart */}
+          <ResponsiveContainer width="100%" height={Math.min(debtors.length * 28 + 20, 300)}>
+            <BarChart
+              data={debtors.slice(0, 10)}
+              layout="vertical"
+              margin={{ top: 0, right: 60, bottom: 0, left: 8 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+              <XAxis
+                type="number"
+                tickFormatter={v => `৳${(v / 1000).toFixed(0)}k`}
+                tick={{ fontSize: 9 }} axisLine={false} tickLine={false}
+              />
+              <YAxis
+                type="category" dataKey="name"
+                tick={{ fontSize: 9 }} axisLine={false} tickLine={false} width={100}
+              />
+              <Tooltip formatter={(v: number) => [`৳${Math.round(v).toLocaleString()}`, "Outstanding"]} />
+              <Bar dataKey="outstanding" name="Outstanding" fill="#ef4444" radius={[0,3,3,0]}>
+                {debtors.slice(0, 10).map((_, i) => {
+                  const maxOut = debtors[0]?.outstanding ?? 1;
+                  const ratio  = debtors[i]!.outstanding / maxOut;
+                  const r = Math.round(239 - (239 - 99)  * (1 - ratio));
+                  const g = Math.round(68  + (131 - 68)  * (1 - ratio));
+                  const b = Math.round(68  + (146 - 68)  * (1 - ratio));
+                  return <Cell key={i} fill={`rgb(${r},${g},${b})`} />;
+                })}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+
+          {/* Table */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border bg-muted/30">
+                  {["#", "Student", "Outstanding", "Overdue", "Pending"].map(h => (
+                    <th key={h} className="px-3 py-2 text-left font-medium text-muted-foreground uppercase tracking-wider">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {debtors.map((d, i) => (
+                  <tr key={d.studentId} className="hover:bg-muted/20 transition-colors">
+                    <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+                    <td className="px-3 py-2 font-medium">{d.name}</td>
+                    <td className="px-3 py-2 font-bold tabular-nums text-red-600">{fmt(d.outstanding)}</td>
+                    <td className="px-3 py-2">
+                      {d.overdueCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-semibold">
+                          {d.overdueCount}
+                        </span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      {d.pendingCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 text-yellow-700 px-2 py-0.5 text-[10px] font-semibold">
+                          {d.pendingCount}
+                        </span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EscalationsTab() {
   const { toast } = useToast();
   const [levelFilter, setLevelFilter] = useState<"ALL" | "CRITICAL" | "WARNING">("ALL");
@@ -4473,6 +4904,9 @@ export default function FinancePage() {
           <TabsTrigger value="escalations" className="flex items-center gap-1.5 data-[state=active]:text-red-600">
             <BellRing className="h-3.5 w-3.5" /> Escalations
           </TabsTrigger>
+          <TabsTrigger value="health" className="flex items-center gap-1.5">
+            <Activity className="h-3.5 w-3.5" /> Health
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -4725,6 +5159,11 @@ export default function FinancePage() {
         {/* ── Escalations tab ── */}
         <TabsContent value="escalations" className="mt-4">
           <EscalationsTab />
+        </TabsContent>
+
+        {/* ── Health tab ── */}
+        <TabsContent value="health" className="mt-4">
+          <HealthTab />
         </TabsContent>
       </Tabs>
 
