@@ -50,7 +50,7 @@ export const ROLE_CONFIG = {
   },
   STUDENT: {
     label: "Student",
-    allowedRoutes: ["/dashboard", "/notifications", "/calendar"],
+    allowedRoutes: ["/dashboard", "/student", "/notifications", "/calendar", "/settings"],
     canManageStudents: false,
     canManageFinance: false,
     canManageStaff: false,

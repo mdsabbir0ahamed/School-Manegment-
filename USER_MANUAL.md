@@ -302,7 +302,69 @@ The **bell icon** in the top-right corner shows all your notifications — payme
 
 ---
 
-## 6. Notifications
+## 6. Student Guide
+
+After logging in with your student account, you are taken directly to your **Student Portal** at the "My Portal" link in the sidebar.
+
+### 6.1 Your Dashboard Header
+
+At the top of the page you will see your name, student ID, class, grade level, and enrolment status (Active / Inactive).
+
+### 6.2 KPI Summary Cards
+
+Four summary cards give you an instant overview:
+- **Attendance Rate** — percentage of classes you have attended
+- **Classes Attended** — number of days present out of total recorded
+- **Exams Taken** — total number of exams on record
+- **Average Score** — your average percentage across all exams
+
+### 6.3 Overview Tab
+
+The Overview tab shows four panels at a glance:
+- **Profile** — your personal details (date of birth, gender, address, parent contact)
+- **Recent Attendance** — your last 10 attendance entries with colour-coded status pills (green = Present, amber = Late, blue = Excused, red = Absent)
+- **Recent Exam Results** — your last 6 exam results with subject, exam name, and score percentage
+- **Attendance Breakdown** — horizontal progress bars showing the split between Present, Late, Excused, and Absent across the last 90 days
+
+### 6.4 Attendance Tab
+
+A full scrollable table showing every attendance record from the last 90 days:
+- Date and day of the week
+- Status (Present / Absent / Late / Excused) with colour-coded pill badges
+- Check-in time (if recorded)
+- Recording method (Manual or RFID)
+- Any notes added by the teacher
+
+The overall attendance rate for the period is shown in the table header.
+
+### 6.5 Results Tab
+
+A complete list of all your exam results, most recent first:
+- Subject name and exam name
+- Exam type (Midterm, Final, Quiz, Assignment, Practical, Unit Test) with colour-coded badges
+- Marks obtained out of total marks
+- Percentage score (colour-coded: green ≥90%, blue ≥75%, amber ≥60%, red below 60%)
+- Letter grade and teacher remarks
+
+Your average percentage across all exams is shown in the table header.
+
+### 6.6 Timetable Tab
+
+Your class weekly timetable, grouped by day:
+- Each day shows all subjects scheduled, sorted by time
+- Each slot shows start/end time, subject name, teacher name, and room number
+- Only days that have scheduled classes are shown
+
+### 6.7 Notifications & Calendar
+
+Like all users, you have access to:
+- **Notifications** — bell icon in the top-right corner shows school announcements and messages directed to you
+- **Calendar** — view school events, holidays, and exam dates from the Calendar page
+- **Settings** — change your password from the Settings page
+
+---
+
+## 7. Notifications
 
 All users receive **in-app notifications** through the bell icon (top-right of the screen). The badge count updates in real-time.
 
@@ -324,7 +386,7 @@ All users receive **in-app notifications** through the bell icon (top-right of t
 
 ---
 
-## 7. Getting Help
+## 8. Getting Help
 
 If you encounter a problem:
 

@@ -252,6 +252,8 @@ All routes are prefixed with `/api/`. Key endpoint groups:
 | PARENT | parent1@school.edu | parent123 |
 | STUDENT | student1@school.edu | student123 |
 
+> The STUDENT user `student1@school.edu` is pre-linked to student record **Rafiq Islam (STU-001, Class One)**. After logging in they land on the Student Portal at `/student`.
+
 ## Key Source Files
 
 | File | Purpose |

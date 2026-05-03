@@ -20,6 +20,7 @@ export const usersTable = pgTable("users", {
   phoneNumber: text("phone_number"),
   role: userRoleEnum("role").notNull().default("TEACHER"),
   isActive: boolean("is_active").notNull().default(true),
+  linkedStudentId: integer("linked_student_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

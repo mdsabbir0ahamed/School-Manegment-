@@ -28,6 +28,7 @@ import ReportCardPage from "@/pages/ReportCardPage";
 import AssetManagementPage from "@/pages/AssetManagementPage";
 import TenantsPage from "@/pages/TenantsPage";
 import PayrollPage from "@/pages/PayrollPage";
+import StudentPortalPage from "@/pages/StudentPortalPage";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -93,6 +94,9 @@ function Router() {
       </Route>
       <Route path="/notifications">
         <ProtectedRoute component={NotificationsPage} route="/notifications" />
+      </Route>
+      <Route path="/student">
+        <ProtectedRoute component={StudentPortalPage} route="/student" />
       </Route>
       <Route path="/parent">
         <ProtectedRoute component={ParentPortalPage} route="/parent" />

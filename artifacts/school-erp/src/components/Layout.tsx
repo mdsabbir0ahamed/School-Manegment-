@@ -17,6 +17,7 @@ import {
 
 const ALL_NAV_ITEMS = [
   { href: "/dashboard",      label: "Dashboard",       icon: LayoutDashboard },
+  { href: "/student",        label: "My Portal",        icon: School },
   { href: "/parent",         label: "My Children",      icon: Home },
   { href: "/students",       label: "Students",         icon: GraduationCap },
   { href: "/attendance",     label: "Attendance",       icon: CalendarCheck },
