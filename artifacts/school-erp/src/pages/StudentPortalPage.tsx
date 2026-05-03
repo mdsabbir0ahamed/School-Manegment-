@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import {
   GraduationCap, CalendarCheck, BookOpen, Clock,
   CheckCircle2, XCircle, AlertCircle, MinusCircle,
-  TrendingUp, Award, BarChart3, User, Megaphone,
+  TrendingUp, Award, BarChart3, User, Megaphone, BookMarked,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -41,6 +41,13 @@ type TimetableResp = {
 type AnnouncementsResp = {
   announcements: { id: number; classId: number; authorName: string; title: string; body: string; createdAt: string }[];
   classId: number | null;
+};
+type HomeworkResp = {
+  homework: {
+    id: number; classId: number; subjectId: number | null; subjectName: string | null;
+    authorName: string; title: string; description: string; dueDate: string | null;
+    status: string; createdAt: string;
+  }[];
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -182,11 +189,12 @@ export default function StudentPortalPage() {
 
       {/* ── Tabs ───────────────────────────────────────────────────────── */}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
+        <TabsList className="grid grid-cols-6 w-full max-w-3xl">
           <TabsTrigger value="overview"       className="text-xs">Overview</TabsTrigger>
           <TabsTrigger value="attendance"     className="text-xs">Attendance</TabsTrigger>
           <TabsTrigger value="results"        className="text-xs">Results</TabsTrigger>
           <TabsTrigger value="timetable"      className="text-xs">Timetable</TabsTrigger>
+          <TabsTrigger value="homework"       className="text-xs">Homework</TabsTrigger>
           <TabsTrigger value="announcements"  className="text-xs">Announcements</TabsTrigger>
         </TabsList>
 
@@ -438,11 +446,90 @@ export default function StudentPortalPage() {
           )}
         </TabsContent>
 
+        {/* ── Homework ──────────────────────────────────────────────── */}
+        <TabsContent value="homework" className="mt-4">
+          <HomeworkTab />
+        </TabsContent>
+
         {/* ── Announcements ─────────────────────────────────────────── */}
         <TabsContent value="announcements" className="mt-4">
           <AnnouncementsTab />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function HomeworkTab() {
+  const [filter, setFilter] = useState<"ACTIVE" | "CLOSED" | "ALL">("ACTIVE");
+  const { data, isLoading } = useQuery<HomeworkResp>({
+    queryKey: ["student-homework", filter],
+    queryFn: () => authedFetch(`/api/student/homework${filter !== "ALL" ? `?status=${filter}` : ""}`),
+  });
+
+  const hw = data?.homework ?? [];
+  const today = new Date().toISOString().split("T")[0]!;
+
+  function dueBadge(dueDate: string | null) {
+    if (!dueDate) return null;
+    const diff = Math.ceil((new Date(dueDate).getTime() - new Date(today).getTime()) / 86400000);
+    if (diff < 0)  return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Overdue</span>;
+    if (diff === 0) return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-600">Due today</span>;
+    if (diff <= 3)  return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Due in {diff}d</span>;
+    return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">Due in {diff}d</span>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground mr-1">Show:</span>
+        {(["ACTIVE", "CLOSED", "ALL"] as const).map(f => (
+          <button key={f} onClick={() => setFilter(f)}
+            className={`text-xs px-2.5 py-1 rounded-full border font-medium transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
+            {f === "ALL" ? "All" : f === "ACTIVE" ? "Active" : "Closed"}
+          </button>
+        ))}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-24 bg-muted animate-pulse rounded-xl" />)}</div>
+      ) : !hw.length ? (
+        <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+          <BookMarked className="h-8 w-8 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">No homework</p>
+          <p className="text-xs mt-1 opacity-70">No {filter !== "ALL" ? filter.toLowerCase() + " " : ""}assignments for your class yet.</p>
+        </div>
+      ) : (
+        hw.map(h => (
+          <div key={h.id} className={`rounded-xl border bg-card p-4 space-y-2 ${h.status === "CLOSED" ? "opacity-60" : ""}`}>
+            <div className="flex items-start gap-3">
+              <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${h.status === "CLOSED" ? "bg-gray-100" : "bg-amber-100"}`}>
+                <BookMarked className={`h-4 w-4 ${h.status === "CLOSED" ? "text-gray-400" : "text-amber-600"}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <h4 className="font-semibold text-sm">{h.title}</h4>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {h.status === "CLOSED" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">Closed</span>}
+                    {dueBadge(h.dueDate)}
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {h.subjectName && <span className="font-medium text-primary">{h.subjectName} · </span>}
+                  {h.authorName} · {new Date(h.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                </p>
+              </div>
+            </div>
+            <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap pl-11">{h.description}</p>
+            {h.dueDate && (
+              <div className="pl-11 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="h-3 w-3" />
+                Due: {new Date(h.dueDate).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+              </div>
+            )}
+          </div>
+        ))
+      )}
     </div>
   );
 }

@@ -14,7 +14,7 @@ import {
   Users, CalendarCheck, Banknote, AlertCircle, CheckCircle2,
   Clock, Link2, FileText, Download, Loader2, ChevronDown,
   ChevronUp, CreditCard, TrendingUp, Send, XCircle, HelpCircle, RefreshCw, History,
-  LayoutDashboard, CalendarClock, Wallet, Megaphone,
+  LayoutDashboard, CalendarClock, Wallet, Megaphone, BookMarked,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -970,8 +970,74 @@ function ParentAnnouncementsCard({ studentId }: { studentId: number }) {
   );
 }
 
+interface ParentHomeworkItem {
+  id: number; classId: number; subjectName: string | null; authorName: string;
+  title: string; description: string; dueDate: string | null; status: string;
+  createdAt: string; studentName?: string | null;
+}
+
+function ParentHomeworkCard({ studentId }: { studentId: number }) {
+  const token = localStorage.getItem("erp_token") ?? "";
+  const { data, isLoading } = useQuery<{ homework: ParentHomeworkItem[] }>({
+    queryKey: ["parent-homework", studentId],
+    queryFn: () => fetch("/api/parent/homework", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+  });
+
+  const hw = (data?.homework ?? []).filter(h => h.status === "ACTIVE");
+  const today = new Date().toISOString().split("T")[0]!;
+
+  function dueBadge(dueDate: string | null) {
+    if (!dueDate) return null;
+    const diff = Math.ceil((new Date(dueDate).getTime() - new Date(today).getTime()) / 86400000);
+    if (diff < 0)   return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Overdue</span>;
+    if (diff === 0)  return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-600">Due today</span>;
+    if (diff <= 3)   return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Due in {diff}d</span>;
+    return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">Due in {diff}d</span>;
+  }
+
+  if (isLoading) return <div className="h-20 bg-muted animate-pulse rounded-xl" />;
+
+  if (!hw.length) return (
+    <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
+      <BookMarked className="h-6 w-6 mx-auto mb-2 opacity-30" />
+      No active homework assignments
+    </div>
+  );
+
+  return (
+    <div className="space-y-2.5">
+      {hw.map(h => (
+        <div key={h.id} className="rounded-xl border border-border bg-card p-3.5">
+          <div className="flex items-start gap-2.5">
+            <div className="h-7 w-7 rounded-full bg-amber-100 flex items-center justify-center shrink-0 mt-0.5">
+              <BookMarked className="h-3.5 w-3.5 text-amber-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-1.5">
+                <p className="font-semibold text-xs">{h.title}</p>
+                {dueBadge(h.dueDate)}
+              </div>
+              {h.subjectName && <p className="text-[10px] text-primary font-medium mt-0.5">{h.subjectName}</p>}
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                {h.authorName} · {new Date(h.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed line-clamp-3 whitespace-pre-wrap">{h.description}</p>
+              {h.dueDate && (
+                <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  Due: {new Date(h.dueDate).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StudentCard({ student }: { student: LinkedStudent }) {
-  const [tab, setTab] = useState<"overview" | "fees" | "payments" | "announcements">("overview");
+  const [tab, setTab] = useState<"overview" | "fees" | "payments" | "announcements" | "homework">("overview");
 
   return (
     <div className="space-y-4">
@@ -1042,6 +1108,15 @@ function StudentCard({ student }: { student: LinkedStudent }) {
           <History className="h-3.5 w-3.5" /> My Payments
         </button>
         <button
+          onClick={() => setTab("homework")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all",
+            tab === "homework" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <BookMarked className="h-3.5 w-3.5" /> Homework
+        </button>
+        <button
           onClick={() => setTab("announcements")}
           className={cn(
             "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all",
@@ -1087,6 +1162,23 @@ function StudentCard({ student }: { student: LinkedStudent }) {
           </CardHeader>
           <CardContent>
             <MyPaymentRequestsCard studentId={student.id} />
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "homework" && (
+        <Card>
+          <CardHeader className="pb-0">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <BookMarked className="h-4 w-4 text-amber-500" /> Homework Assignments
+              <span className="ml-auto text-xs font-normal text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Active assignments only
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <ParentHomeworkCard studentId={student.id} />
           </CardContent>
         </Card>
       )}

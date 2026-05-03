@@ -40,6 +40,7 @@ import studentRouter from "./student/index.js";
 import studentNotesRouter from "./student-notes/index.js";
 import studentIncidentsRouter from "./student-incidents/index.js";
 import classAnnouncementsRouter from "./class-announcements/index.js";
+import homeworkRouter from "./homework/index.js";
 
 const router: IRouter = Router();
 
@@ -84,5 +85,6 @@ router.use(studentRouter);
 router.use(studentNotesRouter);
 router.use(studentIncidentsRouter);
 router.use(classAnnouncementsRouter);
+router.use(homeworkRouter);
 
 export default router;

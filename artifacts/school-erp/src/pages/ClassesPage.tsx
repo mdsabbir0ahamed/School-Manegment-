@@ -140,6 +140,182 @@ function AnnouncementsDialog({ cls, open, onClose }: { cls: Class; open: boolean
   );
 }
 
+// ── Homework Types ───────────────────────────────────────────────────────────
+interface HomeworkItem {
+  id: number; classId: number; subjectId: number | null; subjectName: string | null;
+  authorName: string; title: string; description: string; dueDate: string | null;
+  status: string; createdAt: string;
+}
+
+// ── Homework Dialog ──────────────────────────────────────────────────────────
+function HomeworkDialog({ cls, open, onClose }: { cls: Class; open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [title, setTitle]       = useState("");
+  const [description, setDesc]  = useState("");
+  const [dueDate, setDueDate]   = useState("");
+  const [subjectId, setSubjectId] = useState<string>("");
+
+  // Fetch subjects for this class
+  const token = localStorage.getItem("erp_token") ?? "";
+  const { data: subjectsData } = useQuery<{ subjects: { id: number; name: string; code: string }[] }>({
+    queryKey: ["subjects-for-class", cls.id],
+    queryFn: () => fetch(`/api/subjects?classId=${cls.id}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+    enabled: open,
+  });
+
+  const { data, isLoading } = useQuery<{ homework: HomeworkItem[] }>({
+    queryKey: ["homework", cls.id],
+    queryFn: () => authedFetch(`/api/homework?classId=${cls.id}`),
+    enabled: open,
+  });
+
+  const postMut = useMutation({
+    mutationFn: () => authedFetch<{ homework: HomeworkItem }>("/api/homework", {
+      method: "POST",
+      body: JSON.stringify({
+        classId: cls.id, title: title.trim(), description: description.trim(),
+        dueDate: dueDate || null,
+        subjectId: subjectId && subjectId !== "none" ? parseInt(subjectId, 10) : null,
+      }),
+    }),
+    onSuccess: () => {
+      toast({ title: "Homework posted", description: "Students and parents have been notified." });
+      setTitle(""); setDesc(""); setDueDate(""); setSubjectId("");
+      qc.invalidateQueries({ queryKey: ["homework", cls.id] });
+    },
+    onError: () => toast({ title: "Failed to post", variant: "destructive" }),
+  });
+
+  const closeMut = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) => authedFetch(`/api/homework/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+    onSuccess: () => {
+      toast({ title: "Homework updated" });
+      qc.invalidateQueries({ queryKey: ["homework", cls.id] });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => fetch(`/api/homework/${id}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+    }),
+    onSuccess: () => {
+      toast({ title: "Homework deleted" });
+      qc.invalidateQueries({ queryKey: ["homework", cls.id] });
+    },
+  });
+
+  const subjects = subjectsData?.subjects ?? [];
+
+  function dueBadge(dueDate: string | null) {
+    if (!dueDate) return null;
+    const today = new Date().toISOString().split("T")[0]!;
+    const diff = Math.ceil((new Date(dueDate).getTime() - new Date(today).getTime()) / 86400000);
+    if (diff < 0)   return <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">Overdue</span>;
+    if (diff === 0)  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-medium">Due today</span>;
+    if (diff <= 3)   return <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Due in {diff}d</span>;
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">Due in {diff}d</span>;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Megaphone className="h-4 w-4 text-amber-500" /> Homework — {cls.name}
+            {cls.section && <Badge variant="outline" className="text-xs">{cls.section}</Badge>}
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Post form */}
+        <div className="space-y-3 border rounded-lg p-4 bg-muted/30">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Assign New Homework</p>
+
+          {subjects.length > 0 && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Subject (optional)</Label>
+              <Select value={subjectId} onValueChange={setSubjectId}>
+                <SelectTrigger className="text-sm h-8"><SelectValue placeholder="Select subject…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— No subject —</SelectItem>
+                  {subjects.map(s => <SelectItem key={s.id} value={String(s.id)}>{s.name} ({s.code})</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Title</Label>
+            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Chapter 5 exercises" className="text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Instructions</Label>
+            <Textarea value={description} onChange={e => setDesc(e.target.value)} placeholder="Describe the assignment…" rows={3} className="text-sm resize-none" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Due Date (optional)</Label>
+            <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="text-sm" />
+          </div>
+          <Button size="sm" className="w-full"
+            disabled={!title.trim() || !description.trim() || postMut.isPending}
+            onClick={() => postMut.mutate()}>
+            {postMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Megaphone className="h-3.5 w-3.5 mr-1.5" />}
+            Assign Homework
+          </Button>
+        </div>
+
+        {/* Existing homework */}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Posted Homework</p>
+          {isLoading ? (
+            <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-16 bg-muted animate-pulse rounded-lg" />)}</div>
+          ) : !data?.homework.length ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No homework yet. Assign one above.</p>
+          ) : (
+            <div className="space-y-2">
+              {data.homework.map(h => (
+                <div key={h.id} className={`rounded-lg border border-border bg-card p-3 ${h.status === "CLOSED" ? "opacity-60" : ""}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-medium text-sm">{h.title}</p>
+                        {h.status === "CLOSED" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">Closed</span>}
+                        {dueBadge(h.dueDate)}
+                      </div>
+                      {h.subjectName && <p className="text-[10px] text-primary font-medium mt-0.5">{h.subjectName}</p>}
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{h.authorName} · {new Date(h.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</p>
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{h.description}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        className="text-[11px] text-muted-foreground hover:text-foreground border rounded px-1.5 py-0.5 transition-colors"
+                        onClick={() => closeMut.mutate({ id: h.id, status: h.status === "ACTIVE" ? "CLOSED" : "ACTIVE" })}
+                        title={h.status === "ACTIVE" ? "Close assignment" : "Reopen assignment"}
+                      >
+                        {h.status === "ACTIVE" ? "Close" : "Reopen"}
+                      </button>
+                      <button className="text-muted-foreground hover:text-destructive transition-colors" onClick={() => deleteMut.mutate(h.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const classSchema = z.object({
   name: z.string().min(1, "Required"),
   section: z.string().optional(),
@@ -228,6 +404,7 @@ export default function ClassesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editClass, setEditClass] = useState<Class | undefined>();
   const [announceClass, setAnnounceClass] = useState<Class | null>(null);
+  const [homeworkClass, setHomeworkClass] = useState<Class | null>(null);
   const { data, isLoading } = useListClasses();
   const perms = usePermissions();
   const { user } = useAuth();
@@ -302,12 +479,18 @@ export default function ClassesPage() {
                 <span>Grade {cls.gradeLevel}</span>
                 {cls.teacherName && <span>{cls.teacherName}</span>}
               </div>
-              <div className="mt-3 pt-3 border-t border-border flex gap-2">
+              <div className="mt-3 pt-3 border-t border-border flex gap-3">
                 <button
                   onClick={() => setAnnounceClass(cls)}
                   className="flex items-center gap-1.5 text-[11px] text-indigo-600 hover:text-indigo-700 font-medium transition-colors"
                 >
                   <Megaphone className="h-3 w-3" /> Announcements
+                </button>
+                <button
+                  onClick={() => setHomeworkClass(cls)}
+                  className="flex items-center gap-1.5 text-[11px] text-amber-600 hover:text-amber-700 font-medium transition-colors"
+                >
+                  <Megaphone className="h-3 w-3" /> Homework
                 </button>
               </div>
             </div>
@@ -321,6 +504,10 @@ export default function ClassesPage() {
 
       {announceClass && (
         <AnnouncementsDialog cls={announceClass} open={!!announceClass} onClose={() => setAnnounceClass(null)} />
+      )}
+
+      {homeworkClass && (
+        <HomeworkDialog cls={homeworkClass} open={!!homeworkClass} onClose={() => setHomeworkClass(null)} />
       )}
     </div>
   );
