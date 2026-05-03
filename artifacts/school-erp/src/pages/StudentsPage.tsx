@@ -26,7 +26,7 @@ import { customFetch } from "@workspace/api-client-react";
 import {
   Search, Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight,
   Eye, Lock, Upload, CheckCircle2, XCircle, AlertCircle,
-  ChevronDown, ChevronUp, Clock, FileText, CreditCard,
+  ChevronDown, ChevronUp, Clock, FileText, CreditCard, Download,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -543,16 +543,41 @@ function RecordPaymentDialog({
   );
 }
 
-function FeeLedgerTab({ studentId }: { studentId: number }) {
+function FeeLedgerTab({ studentId, studentCode }: { studentId: number; studentCode: string }) {
   const { user } = useAuth();
+  const { toast } = useToast();
   const canPay = user?.role === "SUPER_ADMIN" || user?.role === "ACCOUNTANT";
   const [yearFilter, setYearFilter] = useState("all");
   const [payInv, setPayInv] = useState<LedgerInvoice | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const { data, isLoading, isError } = useQuery<FeeLedger>({
     queryKey: ["student-fee-ledger", studentId],
     queryFn: () => customFetch(`/api/students/${studentId}/fee-ledger`),
     staleTime: 60_000,
   });
+
+  const downloadStatement = async () => {
+    setDownloading(true);
+    try {
+      const token = localStorage.getItem("erp_token") ?? "";
+      const res = await fetch(`/api/parent/fee-statement/${studentId}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fee-statement-${studentCode}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: "Fee statement downloaded" });
+    } catch {
+      toast({ title: "Download failed", variant: "destructive" });
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (isLoading) return (
     <div className="space-y-2 pt-2">
@@ -595,19 +620,34 @@ function FeeLedgerTab({ studentId }: { studentId: number }) {
 
       {/* Year filter + table */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <p className="text-xs text-muted-foreground font-medium">{filtered.length} invoice{filtered.length !== 1 ? "s" : ""} shown</p>
-          {years.length > 0 && (
-            <Select value={yearFilter} onValueChange={setYearFilter}>
-              <SelectTrigger className="h-7 w-28 text-xs">
-                <SelectValue placeholder="All years" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All years</SelectItem>
-                {years.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          )}
+          <div className="flex items-center gap-2">
+            {years.length > 0 && (
+              <Select value={yearFilter} onValueChange={setYearFilter}>
+                <SelectTrigger className="h-7 w-28 text-xs">
+                  <SelectValue placeholder="All years" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All years</SelectItem>
+                  {years.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+            {canPay && (
+              <button
+                onClick={downloadStatement}
+                disabled={downloading}
+                className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Download fee statement PDF"
+              >
+                {downloading
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Download className="h-3 w-3" />}
+                Statement PDF
+              </button>
+            )}
+          </div>
         </div>
 
         {filtered.length === 0 ? (
@@ -646,7 +686,14 @@ function FeeLedgerTab({ studentId }: { studentId: number }) {
 }
 
 function ViewDialog({ student, open, onClose }: { student: Student | null; open: boolean; onClose: () => void }) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [downloading, setDownloading] = useState(false);
+  const [emailing, setEmailing] = useState(false);
+  const canFinance = user?.role === "SUPER_ADMIN" || user?.role === "ACCOUNTANT";
+
   if (!student) return null;
+
   const profileFields = [
     ["Student ID", student.studentId],
     ["Full Name", `${student.firstName} ${student.lastName}`],
@@ -659,14 +706,78 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
     ["Parent Phone", student.parentPhone ?? "-"],
     ["Parent Email", student.parentEmail ?? "-"],
   ];
+
+  const downloadStatement = async () => {
+    setDownloading(true);
+    try {
+      const token = localStorage.getItem("erp_token") ?? "";
+      const res = await fetch(`/api/parent/fee-statement/${student.id}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fee-statement-${student.studentId}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: "Fee statement downloaded" });
+    } catch {
+      toast({ title: "Download failed", variant: "destructive" });
+    } finally { setDownloading(false); }
+  };
+
+  const emailStatement = async () => {
+    setEmailing(true);
+    try {
+      const token = localStorage.getItem("erp_token") ?? "";
+      const res = await fetch(`/api/parent/fee-statement/${student.id}/email`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any)?.error ?? "Email failed");
+      toast({
+        title: "Statement emailed",
+        description: `Sent to ${(data as any).sentTo}`,
+      });
+    } catch (e: any) {
+      toast({ title: "Email failed", description: e.message, variant: "destructive" });
+    } finally { setEmailing(false); }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {student.firstName} {student.lastName}
-            <Badge variant="outline" className="text-xs font-normal">{student.studentId}</Badge>
-          </DialogTitle>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <DialogTitle className="flex items-center gap-2">
+              {student.firstName} {student.lastName}
+              <Badge variant="outline" className="text-xs font-normal">{student.studentId}</Badge>
+            </DialogTitle>
+            {canFinance && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={downloadStatement}
+                  disabled={downloading}
+                  className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                >
+                  {downloading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                  Statement PDF
+                </button>
+                <button
+                  onClick={emailStatement}
+                  disabled={emailing || (!student.parentEmail)}
+                  title={!student.parentEmail ? "No parent email on file" : "Email statement to parent"}
+                  className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-green-200 bg-green-50 text-green-700 text-xs font-medium hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {emailing ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                  Email to Parent
+                </button>
+              </div>
+            )}
+          </div>
         </DialogHeader>
         <Tabs defaultValue="profile">
           <TabsList className="mb-2">
@@ -690,7 +801,7 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
           </TabsContent>
 
           <TabsContent value="ledger">
-            <FeeLedgerTab studentId={student.id} />
+            <FeeLedgerTab studentId={student.id} studentCode={student.studentId} />
           </TabsContent>
         </Tabs>
       </DialogContent>
