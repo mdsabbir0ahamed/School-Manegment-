@@ -27,7 +27,7 @@ import {
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
   TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
   Target, PencilLine, AlertTriangle, ShieldCheck, BookOpen,
-  Upload, FileText, X, Users, BellRing, ShieldAlert, Settings,
+  Upload, FileText, X, Users, BellRing, ShieldAlert, Settings, Mail,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -4187,6 +4187,7 @@ export default function FinancePage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchPayOpen, setBatchPayOpen] = useState(false);
   const [downloadingReceiptId, setDownloadingReceiptId] = useState<number | null>(null);
+  const [emailingReceiptId, setEmailingReceiptId] = useState<number | null>(null);
   const { toast } = useToast();
 
   const sendReminder = async (invoiceId: number) => {
@@ -4226,6 +4227,30 @@ export default function FinancePage() {
       toast({ title: "Failed to download receipt", variant: "destructive" });
     } finally {
       setDownloadingReceiptId(null);
+    }
+  };
+
+  const emailReceipt = async (txnId: number) => {
+    setEmailingReceiptId(txnId);
+    try {
+      const res = await fetch(`/api/finance/transactions/${txnId}/receipt/email`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("erp_token")}` },
+      });
+      const data = await res.json() as { success?: boolean; message?: string; sentTo?: string; deliveryMode?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      toast({
+        title: data.deliveryMode === "email" ? "Receipt emailed" : "Receipt logged",
+        description: data.message,
+      });
+    } catch (e) {
+      toast({
+        title: "Failed to email receipt",
+        description: e instanceof Error ? e.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setEmailingReceiptId(null);
     }
   };
 
@@ -4497,17 +4522,30 @@ export default function FinancePage() {
                     <td className="px-4 py-3 font-mono text-xs">{t.transactionId ?? "-"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{new Date(t.paidAt).toLocaleDateString()}</td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => downloadReceipt(t.id)}
-                        disabled={downloadingReceiptId === t.id}
-                        className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium disabled:opacity-50 disabled:cursor-wait whitespace-nowrap"
-                        title="Download PDF receipt"
-                      >
-                        {downloadingReceiptId === t.id
-                          ? <Loader2 className="h-3 w-3 animate-spin" />
-                          : <FileText className="h-3 w-3" />}
-                        Receipt
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => downloadReceipt(t.id)}
+                          disabled={downloadingReceiptId === t.id}
+                          className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium disabled:opacity-50 disabled:cursor-wait whitespace-nowrap"
+                          title="Download PDF receipt"
+                        >
+                          {downloadingReceiptId === t.id
+                            ? <Loader2 className="h-3 w-3 animate-spin" />
+                            : <FileText className="h-3 w-3" />}
+                          PDF
+                        </button>
+                        <button
+                          onClick={() => emailReceipt(t.id)}
+                          disabled={emailingReceiptId === t.id}
+                          className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-800 hover:underline font-medium disabled:opacity-50 disabled:cursor-wait whitespace-nowrap"
+                          title="Email receipt to parent"
+                        >
+                          {emailingReceiptId === t.id
+                            ? <Loader2 className="h-3 w-3 animate-spin" />
+                            : <Mail className="h-3 w-3" />}
+                          Email
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

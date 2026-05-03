@@ -2,11 +2,13 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   invoicesTable, transactionsTable, studentsTable, feeTypesTable, tenantsTable,
+  parentStudentsTable, usersTable, notificationsTable,
 } from "@workspace/db";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { requireAuth } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import PDFDocument from "pdfkit";
+import { sendMail } from "../../lib/mailer.js";
 
 const router = Router();
 
@@ -450,6 +452,178 @@ router.get(
       );
 
     doc.end();
+  },
+);
+
+// ── Email Receipt ─────────────────────────────────────────────────────────
+
+router.post(
+  "/finance/transactions/:id/receipt/email",
+  requireAuth,
+  requireFinance,
+  async (req, res): Promise<void> => {
+    const id = parseInt(String(req.params["id"]), 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+    const [txn] = await db.select().from(transactionsTable).where(eq(transactionsTable.id, id)).limit(1);
+    if (!txn) { res.status(404).json({ error: "Transaction not found" }); return; }
+
+    const [[invoice], [student], [tenant]] = await Promise.all([
+      db.select().from(invoicesTable).where(eq(invoicesTable.id, txn.invoiceId)).limit(1),
+      db.select({
+        firstName: studentsTable.firstName,
+        lastName: studentsTable.lastName,
+        parentEmail: studentsTable.parentEmail,
+        parentName: studentsTable.parentName,
+      }).from(studentsTable).where(eq(studentsTable.id, txn.studentId)).limit(1),
+      db.select().from(tenantsTable).limit(1),
+    ]);
+
+    const [feeType] = invoice
+      ? await db.select({ name: feeTypesTable.name }).from(feeTypesTable)
+          .where(eq(feeTypesTable.id, invoice.feeTypeId)).limit(1)
+      : [null];
+
+    // Resolve parent email: prefer linked parent user account, fallback to student.parentEmail
+    const [linkedParent] = await db
+      .select({ email: usersTable.email, userId: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName })
+      .from(parentStudentsTable)
+      .innerJoin(usersTable, eq(usersTable.id, parentStudentsTable.parentUserId))
+      .where(eq(parentStudentsTable.studentId, txn.studentId))
+      .limit(1);
+
+    const recipientEmail = linkedParent?.email ?? student?.parentEmail ?? null;
+    if (!recipientEmail) {
+      res.status(422).json({ error: "No parent email found for this student" });
+      return;
+    }
+
+    // Build the same PDF into a Buffer
+    const schoolName = tenant?.name ?? "Smart School ERP";
+    const studentName = student ? `${student.firstName} ${student.lastName}` : "Unknown";
+    const amountPaid = parseFloat(txn.amountPaid);
+    const paidAt = new Date(txn.paidAt);
+    const formattedDate = paidAt.toLocaleDateString("en-US", { dateStyle: "long" });
+    const formattedTime = paidAt.toLocaleTimeString("en-US", { timeStyle: "short" });
+
+    const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 30, size: "A5", bufferPages: false });
+      const chunks: Buffer[] = [];
+      doc.on("data", (c: Buffer) => chunks.push(c));
+      doc.on("end", () => resolve(Buffer.concat(chunks)));
+      doc.on("error", reject);
+
+      const W = doc.page.width;
+      const CW = W - 60;
+      const GREEN = "#059669";
+      const PRIMARY = "#4F46E5";
+
+      doc.rect(0, 0, W, 58).fill(PRIMARY);
+      doc.fillColor("#FFFFFF").fontSize(15).font("Helvetica-Bold").text(schoolName, 30, 11, { width: CW });
+      doc.fontSize(8.5).font("Helvetica").text("PAYMENT RECEIPT", 30, 32, { width: CW });
+      doc.fillColor("#374151");
+      let y = 68;
+
+      doc.fontSize(7.5).fillColor("#6B7280").font("Helvetica")
+        .text(`Receipt No: TXN-${id}`, 30, y)
+        .text(`${formattedDate}  \u00b7  ${formattedTime}`, 30, y, { width: CW, align: "right" });
+      y += 13;
+      hrLine(doc, y); y += 11;
+
+      doc.fontSize(6.5).fillColor("#9CA3AF").font("Helvetica").text("RECEIVED FROM", 30, y);
+      y += 9;
+      doc.fontSize(13).fillColor("#111827").font("Helvetica-Bold").text(studentName, 30, y);
+      y += 20;
+      hrLine(doc, y); y += 10;
+
+      const details: [string, string][] = [
+        ["Invoice No.", invoice?.invoiceNumber ?? "\u2014"],
+        ["Fee Type", feeType?.name ?? "\u2014"],
+      ];
+      if (invoice?.month) details.push(["Period", invoice.month]);
+      details.push(["Payment Date", formattedDate]);
+      details.push(["Payment Method", txn.method.replace(/_/g, " ")]);
+      if (txn.transactionId) details.push(["Reference ID", txn.transactionId]);
+      if (txn.notes) details.push(["Notes", txn.notes]);
+
+      for (const [label, value] of details) {
+        doc.fontSize(7.5).fillColor("#9CA3AF").font("Helvetica").text(label, 30, y, { width: 120 });
+        doc.fontSize(7.5).fillColor("#111827").font("Helvetica-Bold").text(value, 155, y, { width: CW - 125 });
+        y += 14;
+      }
+      y += 8; hrLine(doc, y); y += 14;
+
+      const BOX_H = 60;
+      doc.rect(30, y, CW, BOX_H).fill("#F0FDF4").stroke("#BBF7D0");
+      doc.fontSize(8).fillColor(GREEN).font("Helvetica").text("AMOUNT PAID", 0, y + 9, { width: W, align: "center" });
+      const amtText = `BDT ${amountPaid.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+      doc.fontSize(24).fillColor(GREEN).font("Helvetica-Bold").text(amtText, 0, y + 22, { width: W, align: "center" });
+      const stampCX = W - 52;
+      const stampCY = y + BOX_H / 2;
+      doc.save().circle(stampCX, stampCY, 20).strokeColor(GREEN).lineWidth(2).stroke().restore();
+      doc.fontSize(10).fillColor(GREEN).font("Helvetica-Bold").text("PAID", stampCX - 20, stampCY - 7, { width: 40, align: "center" });
+
+      const footerY = doc.page.height - 38;
+      hrLine(doc, footerY - 6);
+      doc.fontSize(6.5).fillColor("#9CA3AF").font("Helvetica")
+        .text("This is a computer-generated receipt and does not require a signature.", 30, footerY, { width: CW, align: "center" })
+        .text(`Generated: ${new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}  \u00b7  ${schoolName}`, 30, footerY + 11, { width: CW, align: "center" });
+
+      doc.end();
+    });
+
+    // Send email
+    const parentName = linkedParent
+      ? `${linkedParent.firstName} ${linkedParent.lastName}`
+      : (student?.parentName ?? "Parent/Guardian");
+
+    const result = await sendMail({
+      to: recipientEmail,
+      subject: `Payment Receipt TXN-${id} — ${schoolName}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1f2937">
+          <div style="background:#4F46E5;padding:20px 24px;border-radius:8px 8px 0 0">
+            <h1 style="color:#fff;margin:0;font-size:20px">${schoolName}</h1>
+            <p style="color:#c7d2fe;margin:4px 0 0;font-size:13px">Payment Receipt</p>
+          </div>
+          <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+            <p style="margin:0 0 16px">Dear <strong>${parentName}</strong>,</p>
+            <p style="margin:0 0 16px">We have recorded a payment for <strong>${studentName}</strong>. Please find the official receipt attached to this email.</p>
+            <table style="width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px">
+              <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;width:40%">Receipt No.</td><td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600">TXN-${id}</td></tr>
+              <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280">Amount Paid</td><td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;color:#059669">BDT ${amountPaid.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>
+              <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280">Payment Date</td><td style="padding:8px 12px;border:1px solid #e5e7eb">${formattedDate}</td></tr>
+              <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280">Method</td><td style="padding:8px 12px;border:1px solid #e5e7eb">${txn.method.replace(/_/g, " ")}</td></tr>
+              ${txn.transactionId ? `<tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280">Reference</td><td style="padding:8px 12px;border:1px solid #e5e7eb;font-family:monospace">${txn.transactionId}</td></tr>` : ""}
+            </table>
+            <p style="margin:0;font-size:12px;color:#9ca3af">This is an automated message from ${schoolName}. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `,
+      attachments: [
+        { filename: `receipt-TXN-${id}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
+      ],
+    });
+
+    // Create in-app notification for the linked parent user (if they have an account)
+    if (linkedParent?.userId) {
+      await db.insert(notificationsTable).values({
+        userId: linkedParent.userId,
+        title: `Payment Receipt — TXN-${id}`,
+        message: `Receipt for ${studentName} (BDT ${amountPaid.toLocaleString("en-US", { minimumFractionDigits: 2 })}) has been emailed to ${recipientEmail}.`,
+        type: "INFO",
+        link: "/finance",
+      });
+    }
+
+    res.json({
+      success: true,
+      sentTo: recipientEmail,
+      deliveryMode: result.deliveryMode,
+      message: result.deliveryMode === "email"
+        ? `Receipt emailed to ${recipientEmail}`
+        : `SMTP not configured — receipt logged. Configure SMTP_HOST / SMTP_USER / SMTP_PASS to enable email delivery.`,
+    });
   },
 );
 
