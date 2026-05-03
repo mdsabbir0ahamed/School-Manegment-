@@ -73,6 +73,10 @@ type ReminderSettings = {
   reminderDays: number[];
   smsEnabled: boolean;
   whatsappEnabled: boolean;
+  digestSmsEnabled: boolean;
+  digestWhatsappEnabled: boolean;
+  digestLastRunAt: string | null;
+  digestLastRunCount: number;
   lastRunAt: string | null;
   lastRunCount: number;
 };
@@ -620,7 +624,10 @@ function RemindersTab() {
   const [localEnabled, setLocalEnabled] = useState<boolean | null>(null);
   const [localSms, setLocalSms] = useState<boolean | null>(null);
   const [localWhatsapp, setLocalWhatsapp] = useState<boolean | null>(null);
+  const [localDigestSms, setLocalDigestSms] = useState<boolean | null>(null);
+  const [localDigestWhatsapp, setLocalDigestWhatsapp] = useState<boolean | null>(null);
   const [triggerResult, setTriggerResult] = useState<string | null>(null);
+  const [digestResult, setDigestResult] = useState<string | null>(null);
 
   const { data: settings, isLoading } = useQuery<ReminderSettings>({
     queryKey: ["reminder-settings"],
@@ -631,9 +638,15 @@ function RemindersTab() {
   const effectiveEnabled = localEnabled ?? settings?.isEnabled ?? true;
   const effectiveSms = localSms ?? settings?.smsEnabled ?? false;
   const effectiveWhatsapp = localWhatsapp ?? settings?.whatsappEnabled ?? false;
+  const effectiveDigestSms = localDigestSms ?? settings?.digestSmsEnabled ?? false;
+  const effectiveDigestWhatsapp = localDigestWhatsapp ?? settings?.digestWhatsappEnabled ?? false;
 
   const saveMutation = useMutation({
-    mutationFn: (body: { isEnabled: boolean; reminderDays: number[]; smsEnabled: boolean; whatsappEnabled: boolean }) =>
+    mutationFn: (body: {
+      isEnabled: boolean; reminderDays: number[];
+      smsEnabled: boolean; whatsappEnabled: boolean;
+      digestSmsEnabled: boolean; digestWhatsappEnabled: boolean;
+    }) =>
       authedFetch("/api/reminder-settings", {
         method: "PUT",
         body: JSON.stringify(body),
@@ -644,9 +657,25 @@ function RemindersTab() {
       setLocalEnabled(null);
       setLocalSms(null);
       setLocalWhatsapp(null);
+      setLocalDigestSms(null);
+      setLocalDigestWhatsapp(null);
       toast({ title: "Reminder settings saved" });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  const digestMutation = useMutation({
+    mutationFn: () =>
+      authedFetch<{ message: string; sent: number; skipped: boolean }>("/api/reminder-settings/digest/trigger", { method: "POST" }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["reminder-settings"] });
+      setDigestResult(data.message);
+      toast({
+        title: data.skipped ? "Digest skipped" : data.sent > 0 ? `Digest sent to ${data.sent} parent${data.sent > 1 ? "s" : ""}` : "No outstanding balances",
+        description: data.message,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Digest failed", description: e.message, variant: "destructive" }),
   });
 
   const triggerMutation = useMutation({
@@ -667,7 +696,7 @@ function RemindersTab() {
     );
   };
 
-  const isDirty = localDays !== null || localEnabled !== null || localSms !== null || localWhatsapp !== null;
+  const isDirty = localDays !== null || localEnabled !== null || localSms !== null || localWhatsapp !== null || localDigestSms !== null || localDigestWhatsapp !== null;
 
   if (isLoading) return (
     <div className="space-y-3 py-4">
@@ -783,10 +812,69 @@ function RemindersTab() {
         )}
       </div>
 
+      {/* Daily Digest */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-sm">Daily Fee Digest</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Once per day, send each parent a single consolidated message listing <strong>all</strong> their outstanding invoices — regardless of due-date offset. Runs alongside the regular reminder scheduler.
+            </p>
+            {settings?.digestLastRunAt && (
+              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Last digest: {new Date(settings.digestLastRunAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
+                {" · "}{settings.digestLastRunCount} message{settings.digestLastRunCount !== 1 ? "s" : ""} sent
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="flex items-center justify-between rounded-lg border border-border p-3 gap-3">
+            <div>
+              <p className="text-sm font-medium">Digest via SMS</p>
+              <p className="text-xs text-muted-foreground">One text per parent, all invoices</p>
+            </div>
+            <Switch checked={effectiveDigestSms} onCheckedChange={v => setLocalDigestSms(v)} />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-border p-3 gap-3">
+            <div>
+              <p className="text-sm font-medium">Digest via WhatsApp</p>
+              <p className="text-xs text-muted-foreground">One WhatsApp per parent, all invoices</p>
+            </div>
+            <Switch checked={effectiveDigestWhatsapp} onCheckedChange={v => setLocalDigestWhatsapp(v)} />
+          </div>
+        </div>
+        {(effectiveDigestSms || effectiveDigestWhatsapp) && (
+          <div className="flex items-center justify-between gap-3 pt-1">
+            <p className="text-xs text-amber-600 flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+              Phone resolved from: linked parent account → student's parent phone field.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setDigestResult(null); digestMutation.mutate(); }}
+              disabled={digestMutation.isPending}
+            >
+              {digestMutation.isPending
+                ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> Sending…</>
+                : <><Play className="mr-2 h-3.5 w-3.5" /> Send Digest Now</>}
+            </Button>
+          </div>
+        )}
+        {digestResult && (
+          <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            {digestResult}
+          </div>
+        )}
+      </div>
+
       {/* Actions */}
       <div className="flex items-center gap-3 flex-wrap">
         <Button
-          onClick={() => saveMutation.mutate({ isEnabled: effectiveEnabled, reminderDays: effectiveDays, smsEnabled: effectiveSms, whatsappEnabled: effectiveWhatsapp })}
+          onClick={() => saveMutation.mutate({ isEnabled: effectiveEnabled, reminderDays: effectiveDays, smsEnabled: effectiveSms, whatsappEnabled: effectiveWhatsapp, digestSmsEnabled: effectiveDigestSms, digestWhatsappEnabled: effectiveDigestWhatsapp })}
           disabled={saveMutation.isPending || !isDirty}
         >
           {saveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -804,7 +892,7 @@ function RemindersTab() {
         </Button>
 
         {isDirty && (
-          <Button variant="ghost" size="sm" onClick={() => { setLocalDays(null); setLocalEnabled(null); setLocalSms(null); setLocalWhatsapp(null); }}>
+          <Button variant="ghost" size="sm" onClick={() => { setLocalDays(null); setLocalEnabled(null); setLocalSms(null); setLocalWhatsapp(null); setLocalDigestSms(null); setLocalDigestWhatsapp(null); }}>
             <RefreshCw className="mr-2 h-3.5 w-3.5" /> Reset
           </Button>
         )}

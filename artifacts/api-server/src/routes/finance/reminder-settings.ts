@@ -4,7 +4,7 @@ import { reminderSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
-import { runReminderCron } from "../../lib/reminder-cron.js";
+import { runReminderCron, sendParentDigest } from "../../lib/reminder-cron.js";
 
 const router = Router();
 
@@ -38,11 +38,13 @@ router.put(
   requireAuth,
   requireFinance,
   async (req, res): Promise<void> => {
-    const { isEnabled, reminderDays, smsEnabled, whatsappEnabled } = req.body as {
+    const { isEnabled, reminderDays, smsEnabled, whatsappEnabled, digestSmsEnabled, digestWhatsappEnabled } = req.body as {
       isEnabled?: boolean;
       reminderDays?: number[];
       smsEnabled?: boolean;
       whatsappEnabled?: boolean;
+      digestSmsEnabled?: boolean;
+      digestWhatsappEnabled?: boolean;
     };
 
     await ensureSettings();
@@ -53,6 +55,8 @@ router.put(
     if (typeof isEnabled === "boolean") updates.isEnabled = isEnabled;
     if (typeof smsEnabled === "boolean") updates.smsEnabled = smsEnabled;
     if (typeof whatsappEnabled === "boolean") updates.whatsappEnabled = whatsappEnabled;
+    if (typeof digestSmsEnabled === "boolean") updates.digestSmsEnabled = digestSmsEnabled;
+    if (typeof digestWhatsappEnabled === "boolean") updates.digestWhatsappEnabled = digestWhatsappEnabled;
     if (Array.isArray(reminderDays)) {
       const valid = reminderDays.filter(d => typeof d === "number" && d >= -30 && d <= 60);
       updates.reminderDays = JSON.stringify([...new Set(valid)].sort((a, b) => a - b));
@@ -83,6 +87,25 @@ router.post(
         ? "No invoices matched the configured reminder windows for today."
         : `Sent ${result.sent} reminder${result.sent !== 1 ? "s" : ""} successfully.`,
       sent: result.sent,
+    });
+  },
+);
+
+// POST /reminder-settings/digest/trigger — manual forced digest run
+router.post(
+  "/reminder-settings/digest/trigger",
+  requireAuth,
+  requireFinance,
+  async (_req, res): Promise<void> => {
+    const result = await sendParentDigest(true);
+    res.json({
+      skipped: result.skipped,
+      sent: result.sent,
+      message: result.skipped
+        ? "Digest skipped — SMS/WhatsApp digest is disabled or Twilio is not configured."
+        : result.sent === 0
+        ? "Digest sent but no parents had an outstanding balance."
+        : `Digest sent to ${result.sent} parent${result.sent !== 1 ? "s" : ""} successfully.`,
     });
   },
 );
