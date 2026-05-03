@@ -14,7 +14,7 @@ import {
   Users, CalendarCheck, Banknote, AlertCircle, CheckCircle2,
   Clock, Link2, FileText, Download, Loader2, ChevronDown,
   ChevronUp, CreditCard, TrendingUp, Send, XCircle, HelpCircle, RefreshCw, History,
-  LayoutDashboard, CalendarClock, Wallet, Megaphone, BookMarked, CalendarDays,
+  LayoutDashboard, CalendarClock, Wallet, Megaphone, BookMarked, CalendarDays, BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -1115,8 +1115,58 @@ function ParentExamCard({ studentId }: { studentId: number }) {
   );
 }
 
+interface ParentLibraryLoan {
+  id: number; bookTitle: string; bookAuthor: string; studentName: string;
+  borrowDate: string; dueDate: string; status: string;
+}
+
+function ParentLibraryCard({ studentId }: { studentId: number }) {
+  const token = localStorage.getItem("erp_token") ?? "";
+  const { data, isLoading } = useQuery<{ loans: ParentLibraryLoan[] }>({
+    queryKey: ["parent-library", studentId],
+    queryFn: () => fetch("/api/parent/library", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+  });
+  const loans = data?.loans ?? [];
+  const today = new Date().toISOString().split("T")[0]!;
+
+  if (isLoading) return <div className="h-16 bg-muted animate-pulse rounded-xl" />;
+
+  return (
+    <div className="space-y-2.5">
+      {!loans.length ? (
+        <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
+          <BookOpen className="h-6 w-6 mx-auto mb-2 opacity-30" />
+          No active book loans
+        </div>
+      ) : (
+        loans.map(loan => {
+          const diff = Math.ceil((new Date(loan.dueDate).getTime() - new Date(today).getTime()) / 86400000);
+          const isOverdue = loan.status === "OVERDUE" || diff < 0;
+          return (
+            <div key={loan.id} className={`rounded-xl border p-3.5 ${isOverdue ? "border-red-200 bg-red-50" : "bg-card border-border"}`}>
+              <div className="flex items-start gap-2.5">
+                <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isOverdue ? "bg-red-100" : "bg-primary/10"}`}>
+                  <BookOpen className={`h-3.5 w-3.5 ${isOverdue ? "text-red-600" : "text-primary"}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-xs">{loan.bookTitle}</p>
+                  <p className="text-[10px] text-muted-foreground">{loan.bookAuthor}</p>
+                  <p className={`text-[10px] font-semibold mt-0.5 ${isOverdue ? "text-red-600" : diff <= 3 ? "text-amber-600" : "text-muted-foreground"}`}>
+                    Due: {new Date(loan.dueDate).toLocaleDateString("en-GB")}
+                    {isOverdue ? ` · Overdue by ${Math.abs(diff)}d!` : diff <= 3 ? ` · Due in ${diff}d` : ""}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
 function StudentCard({ student }: { student: LinkedStudent }) {
-  const [tab, setTab] = useState<"overview" | "fees" | "payments" | "announcements" | "homework" | "exams">("overview");
+  const [tab, setTab] = useState<"overview" | "fees" | "payments" | "announcements" | "homework" | "exams" | "library">("overview");
 
   return (
     <div className="space-y-4">
@@ -1196,6 +1246,15 @@ function StudentCard({ student }: { student: LinkedStudent }) {
           <CalendarDays className="h-3.5 w-3.5" /> Exams
         </button>
         <button
+          onClick={() => setTab("library")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all",
+            tab === "library" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <BookOpen className="h-3.5 w-3.5" /> Library
+        </button>
+        <button
           onClick={() => setTab("homework")}
           className={cn(
             "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all",
@@ -1267,6 +1326,20 @@ function StudentCard({ student }: { student: LinkedStudent }) {
           </CardHeader>
           <CardContent className="pt-4">
             <ParentExamCard studentId={student.id} />
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "library" && (
+        <Card>
+          <CardHeader className="pb-0">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-primary" /> Library — Active Loans
+              <span className="ml-auto text-xs font-normal text-muted-foreground">Books currently borrowed</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <ParentLibraryCard studentId={student.id} />
           </CardContent>
         </Card>
       )}

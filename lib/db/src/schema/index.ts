@@ -28,3 +28,4 @@ export * from "./student-incidents";
 export * from "./class-announcements";
 export * from "./homework";
 export * from "./exam-schedule";
+export * from "./library";

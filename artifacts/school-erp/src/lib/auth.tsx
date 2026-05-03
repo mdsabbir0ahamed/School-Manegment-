@@ -9,7 +9,7 @@ export const ROLE_CONFIG = {
       "/classes", "/users", "/settings", "/audit",
       "/subjects", "/timetable", "/notifications",
       "/calendar", "/documents", "/qr", "/report-card",
-      "/assets", "/tenants", "/payroll",
+      "/assets", "/tenants", "/payroll", "/library",
     ],
     canManageStudents: true,
     canManageFinance: true,
@@ -22,7 +22,7 @@ export const ROLE_CONFIG = {
     allowedRoutes: [
       "/dashboard", "/students", "/attendance", "/classes",
       "/subjects", "/timetable", "/notifications", "/calendar", "/qr", "/report-card",
-      "/assets",
+      "/assets", "/library",
     ],
     canManageStudents: true,
     canManageFinance: false,
@@ -32,7 +32,7 @@ export const ROLE_CONFIG = {
   },
   ACCOUNTANT: {
     label: "Accountant",
-    allowedRoutes: ["/dashboard", "/finance", "/payroll", "/notifications", "/calendar"],
+    allowedRoutes: ["/dashboard", "/finance", "/payroll", "/notifications", "/calendar", "/library"],
     canManageStudents: false,
     canManageFinance: true,
     canManageStaff: false,

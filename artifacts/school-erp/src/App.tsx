@@ -29,6 +29,7 @@ import AssetManagementPage from "@/pages/AssetManagementPage";
 import TenantsPage from "@/pages/TenantsPage";
 import PayrollPage from "@/pages/PayrollPage";
 import StudentPortalPage from "@/pages/StudentPortalPage";
+import LibraryPage from "@/pages/LibraryPage";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -121,6 +122,9 @@ function Router() {
       </Route>
       <Route path="/payroll">
         <ProtectedRoute component={PayrollPage} route="/payroll" />
+      </Route>
+      <Route path="/library">
+        <ProtectedRoute component={LibraryPage} route="/library" />
       </Route>
       <Route path="/">
         {token ? <Redirect to="/dashboard" /> : <Redirect to="/login" />}

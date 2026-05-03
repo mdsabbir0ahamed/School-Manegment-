@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import {
   GraduationCap, CalendarCheck, BookOpen, Clock,
   CheckCircle2, XCircle, AlertCircle, MinusCircle,
-  TrendingUp, Award, BarChart3, User, Megaphone, BookMarked, CalendarDays,
+  TrendingUp, Award, BarChart3, User, Megaphone, BookMarked, CalendarDays, RotateCcw,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -47,6 +47,15 @@ type HomeworkResp = {
     id: number; classId: number; subjectId: number | null; subjectName: string | null;
     authorName: string; title: string; description: string; dueDate: string | null;
     status: string; createdAt: string;
+  }[];
+};
+type StudentLibraryResp = {
+  loans: {
+    id: number; bookId: number; bookTitle: string; bookAuthor: string; subject: string | null;
+    borrowDate: string; dueDate: string; returnDate: string | null; status: string; notes: string | null;
+  }[];
+  available: {
+    id: number; title: string; author: string; subject: string | null; availableCopies: number; totalCopies: number; location: string | null;
   }[];
 };
 type ExamScheduleResp = {
@@ -196,13 +205,14 @@ export default function StudentPortalPage() {
 
       {/* ── Tabs ───────────────────────────────────────────────────────── */}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-7 w-full max-w-4xl">
+        <TabsList className="grid grid-cols-8 w-full max-w-5xl">
           <TabsTrigger value="overview"       className="text-xs">Overview</TabsTrigger>
           <TabsTrigger value="attendance"     className="text-xs">Attendance</TabsTrigger>
           <TabsTrigger value="results"        className="text-xs">Results</TabsTrigger>
           <TabsTrigger value="timetable"      className="text-xs">Timetable</TabsTrigger>
           <TabsTrigger value="exams"          className="text-xs">Exams</TabsTrigger>
           <TabsTrigger value="homework"       className="text-xs">Homework</TabsTrigger>
+          <TabsTrigger value="library"        className="text-xs">Library</TabsTrigger>
           <TabsTrigger value="announcements"  className="text-xs">Notices</TabsTrigger>
         </TabsList>
 
@@ -459,6 +469,11 @@ export default function StudentPortalPage() {
           <ExamScheduleTab />
         </TabsContent>
 
+        {/* ── Library ───────────────────────────────────────────────── */}
+        <TabsContent value="library" className="mt-4">
+          <StudentLibraryTab />
+        </TabsContent>
+
         {/* ── Homework ──────────────────────────────────────────────── */}
         <TabsContent value="homework" className="mt-4">
           <HomeworkTab />
@@ -482,6 +497,103 @@ const EXAM_TYPE_COLORS: Record<string, string> = {
   UNIT_TEST: "bg-amber-100 text-amber-700", QUIZ: "bg-blue-100 text-blue-700",
   ASSIGNMENT: "bg-purple-100 text-purple-700", PRACTICAL: "bg-green-100 text-green-700",
 };
+
+function StudentLibraryTab() {
+  const { data, isLoading } = useQuery<StudentLibraryResp>({
+    queryKey: ["student-library"],
+    queryFn: () => authedFetch("/api/student/library"),
+  });
+
+  const loans     = data?.loans     ?? [];
+  const available = data?.available ?? [];
+  const today = new Date().toISOString().split("T")[0]!;
+
+  const activeLoans = loans.filter(l => l.status !== "RETURNED");
+  const pastLoans   = loans.filter(l => l.status === "RETURNED");
+
+  return (
+    <div className="space-y-6">
+      {/* My Active Loans */}
+      <div>
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
+          <BookMarked className="h-4 w-4 text-primary" /> My Borrowed Books
+          {activeLoans.length > 0 && <span className="ml-1 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{activeLoans.length}</span>}
+        </h3>
+        {isLoading ? (
+          <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-16 bg-muted animate-pulse rounded-xl" />)}</div>
+        ) : !activeLoans.length ? (
+          <div className="rounded-xl border border-dashed border-border px-6 py-8 text-center text-sm text-muted-foreground">
+            <BookOpen className="h-7 w-7 mx-auto mb-2 opacity-25" />
+            No books currently borrowed
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {activeLoans.map(loan => {
+              const diff = Math.ceil((new Date(loan.dueDate).getTime() - new Date(today).getTime()) / 86400000);
+              const isOverdue = loan.status === "OVERDUE" || diff < 0;
+              return (
+                <div key={loan.id} className={`rounded-xl border p-4 flex items-start gap-3 ${isOverdue ? "border-red-200 bg-red-50" : "bg-card"}`}>
+                  <div className={`h-9 w-7 rounded bg-primary/10 flex items-center justify-center shrink-0`}>
+                    <BookOpen className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">{loan.bookTitle}</p>
+                    <p className="text-xs text-muted-foreground">{loan.bookAuthor}</p>
+                    {loan.subject && <p className="text-[10px] text-primary font-medium mt-0.5">{loan.subject}</p>}
+                    <div className="flex items-center gap-3 mt-1.5 text-xs">
+                      <span className="text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        Borrowed: {new Date(loan.borrowDate).toLocaleDateString("en-GB")}
+                      </span>
+                      <span className={`font-semibold ${isOverdue ? "text-red-600" : diff <= 3 ? "text-amber-600" : "text-muted-foreground"}`}>
+                        {isOverdue ? `Overdue by ${Math.abs(diff)}d!` : `Due in ${diff}d · ${new Date(loan.dueDate).toLocaleDateString("en-GB")}`}
+                      </span>
+                    </div>
+                  </div>
+                  {isOverdue && (
+                    <span className="text-[10px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded shrink-0">OVERDUE</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {pastLoans.length > 0 && (
+          <p className="text-xs text-muted-foreground mt-2">{pastLoans.length} previously returned book{pastLoans.length !== 1 ? "s" : ""}</p>
+        )}
+      </div>
+
+      {/* Available Books */}
+      <div>
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
+          <BookOpen className="h-4 w-4 text-green-600" /> Available in Library
+          <span className="ml-1 text-xs text-muted-foreground font-normal">({available.length} books)</span>
+        </h3>
+        {isLoading ? (
+          <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-muted animate-pulse rounded-lg" />)}</div>
+        ) : !available.length ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">No books currently available for borrowing.</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-2">
+            {available.map(book => (
+              <div key={book.id} className="flex items-center gap-2.5 rounded-lg border bg-card p-3">
+                <div className="h-8 w-6 rounded bg-green-50 flex items-center justify-center shrink-0">
+                  <BookOpen className="h-3.5 w-3.5 text-green-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-xs leading-tight truncate">{book.title}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{book.author}</p>
+                  {book.subject && <p className="text-[10px] text-primary">{book.subject}</p>}
+                </div>
+                <span className="text-[10px] text-green-600 font-semibold shrink-0">{book.availableCopies} left</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ExamScheduleTab() {
   const [showAll, setShowAll] = useState(false);

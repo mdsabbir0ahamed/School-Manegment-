@@ -42,6 +42,7 @@ import studentIncidentsRouter from "./student-incidents/index.js";
 import classAnnouncementsRouter from "./class-announcements/index.js";
 import homeworkRouter from "./homework/index.js";
 import examScheduleRouter from "./exam-schedule/index.js";
+import libraryRouter from "./library/index.js";
 
 const router: IRouter = Router();
 
@@ -88,5 +89,6 @@ router.use(studentIncidentsRouter);
 router.use(classAnnouncementsRouter);
 router.use(homeworkRouter);
 router.use(examScheduleRouter);
+router.use(libraryRouter);
 
 export default router;
