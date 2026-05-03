@@ -14,7 +14,7 @@ import {
   Users, CalendarCheck, Banknote, AlertCircle, CheckCircle2,
   Clock, Link2, FileText, Download, Loader2, ChevronDown,
   ChevronUp, CreditCard, TrendingUp, Send, XCircle, HelpCircle, RefreshCw, History,
-  LayoutDashboard, CalendarClock, Wallet,
+  LayoutDashboard, CalendarClock, Wallet, Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -923,8 +923,55 @@ function AttendanceSummaryCard({ studentId }: { studentId: number }) {
 
 // ── Student Card ───────────────────────────────────────────────────────────
 
+interface ClassAnnouncement {
+  id: number; classId: number; authorName: string; title: string; body: string; createdAt: string; studentName?: string | null;
+}
+
+function ParentAnnouncementsCard({ studentId }: { studentId: number }) {
+  const token = localStorage.getItem("erp_token") ?? "";
+  const { data, isLoading } = useQuery<{ announcements: ClassAnnouncement[] }>({
+    queryKey: ["parent-announcements", studentId],
+    queryFn: () => fetch(`/api/parent/announcements`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+  });
+
+  const filtered = (data?.announcements ?? []).filter(a => {
+    // filter to show all (already filtered by server for this parent's linked classes)
+    return true;
+  });
+
+  if (isLoading) return <div className="h-20 bg-muted animate-pulse rounded-xl" />;
+
+  if (!filtered.length) return (
+    <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
+      <Megaphone className="h-6 w-6 mx-auto mb-2 opacity-30" />
+      No announcements yet from the class teacher
+    </div>
+  );
+
+  return (
+    <div className="space-y-2.5">
+      {filtered.map(a => (
+        <div key={a.id} className="rounded-xl border border-border bg-card p-3.5">
+          <div className="flex items-start gap-2.5">
+            <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+              <Megaphone className="h-3.5 w-3.5 text-indigo-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="font-semibold text-xs">{a.title}</h4>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                {a.authorName} · {new Date(a.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              </p>
+              <p className="text-xs mt-1.5 leading-relaxed text-muted-foreground whitespace-pre-wrap">{a.body}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StudentCard({ student }: { student: LinkedStudent }) {
-  const [tab, setTab] = useState<"overview" | "fees" | "payments">("overview");
+  const [tab, setTab] = useState<"overview" | "fees" | "payments" | "announcements">("overview");
 
   return (
     <div className="space-y-4">
@@ -994,6 +1041,15 @@ function StudentCard({ student }: { student: LinkedStudent }) {
         >
           <History className="h-3.5 w-3.5" /> My Payments
         </button>
+        <button
+          onClick={() => setTab("announcements")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all",
+            tab === "announcements" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Megaphone className="h-3.5 w-3.5" /> Announcements
+        </button>
       </div>
 
       {/* Tab content */}
@@ -1031,6 +1087,23 @@ function StudentCard({ student }: { student: LinkedStudent }) {
           </CardHeader>
           <CardContent>
             <MyPaymentRequestsCard studentId={student.id} />
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "announcements" && (
+        <Card>
+          <CardHeader className="pb-0">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Megaphone className="h-4 w-4 text-indigo-500" /> Class Announcements
+              <span className="ml-auto text-xs font-normal text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Latest from the teacher
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <ParentAnnouncementsCard studentId={student.id} />
           </CardContent>
         </Card>
       )}

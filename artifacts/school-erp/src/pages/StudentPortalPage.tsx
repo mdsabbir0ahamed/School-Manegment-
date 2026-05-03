@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import {
   GraduationCap, CalendarCheck, BookOpen, Clock,
   CheckCircle2, XCircle, AlertCircle, MinusCircle,
-  TrendingUp, Award, BarChart3, User,
+  TrendingUp, Award, BarChart3, User, Megaphone,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -37,6 +37,10 @@ type ResultsResp = {
 };
 type TimetableResp = {
   slots: { id: number; dayOfWeek: string; startTime: string; endTime: string; room: string | null; subjectName: string; subjectCode: string; teacherFirst: string | null; teacherLast: string | null }[];
+};
+type AnnouncementsResp = {
+  announcements: { id: number; classId: number; authorName: string; title: string; body: string; createdAt: string }[];
+  classId: number | null;
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -178,11 +182,12 @@ export default function StudentPortalPage() {
 
       {/* ── Tabs ───────────────────────────────────────────────────────── */}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-4 w-full max-w-lg">
-          <TabsTrigger value="overview"    className="text-xs">Overview</TabsTrigger>
-          <TabsTrigger value="attendance"  className="text-xs">Attendance</TabsTrigger>
-          <TabsTrigger value="results"     className="text-xs">Results</TabsTrigger>
-          <TabsTrigger value="timetable"   className="text-xs">Timetable</TabsTrigger>
+        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
+          <TabsTrigger value="overview"       className="text-xs">Overview</TabsTrigger>
+          <TabsTrigger value="attendance"     className="text-xs">Attendance</TabsTrigger>
+          <TabsTrigger value="results"        className="text-xs">Results</TabsTrigger>
+          <TabsTrigger value="timetable"      className="text-xs">Timetable</TabsTrigger>
+          <TabsTrigger value="announcements"  className="text-xs">Announcements</TabsTrigger>
         </TabsList>
 
         {/* ── Overview ─────────────────────────────────────────────────── */}
@@ -432,7 +437,55 @@ export default function StudentPortalPage() {
             </div>
           )}
         </TabsContent>
+
+        {/* ── Announcements ─────────────────────────────────────────── */}
+        <TabsContent value="announcements" className="mt-4">
+          <AnnouncementsTab />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function AnnouncementsTab() {
+  const { data, isLoading } = useQuery<AnnouncementsResp>({
+    queryKey: ["student-announcements"],
+    queryFn: () => authedFetch("/api/student/announcements"),
+  });
+
+  if (isLoading) return (
+    <div className="space-y-3">
+      {[1,2,3].map(i => <div key={i} className="h-20 bg-muted animate-pulse rounded-xl" />)}
+    </div>
+  );
+
+  if (!data?.announcements.length) return (
+    <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+      <Megaphone className="h-8 w-8 mx-auto mb-3 opacity-30" />
+      <p className="font-medium">No announcements yet</p>
+      <p className="text-xs mt-1 opacity-70">Your teacher hasn't posted any announcements for your class.</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">{data.announcements.length} announcement{data.announcements.length !== 1 ? "s" : ""} from your class</p>
+      {data.announcements.map(a => (
+        <div key={a.id} className="rounded-xl border border-border bg-card p-4 space-y-2">
+          <div className="flex items-start gap-3">
+            <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+              <Megaphone className="h-4 w-4 text-indigo-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="font-semibold text-sm">{a.title}</h4>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {a.authorName} · {new Date(a.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              </p>
+            </div>
+          </div>
+          <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap pl-11">{a.body}</p>
+        </div>
+      ))}
     </div>
   );
 }

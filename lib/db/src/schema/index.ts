@@ -25,3 +25,4 @@ export * from "./fee-statement-logs";
 export * from "./fee-statement-schedule";
 export * from "./student-notes";
 export * from "./student-incidents";
+export * from "./class-announcements";
