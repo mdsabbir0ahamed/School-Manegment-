@@ -21,3 +21,4 @@ export * from "./student-discounts";
 export * from "./expenses";
 export * from "./budgets";
 export * from "./fee-schedules";
+export * from "./fee-statement-logs";

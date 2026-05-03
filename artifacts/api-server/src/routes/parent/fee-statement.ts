@@ -3,8 +3,9 @@ import { db } from "@workspace/db";
 import {
   invoicesTable, transactionsTable, studentsTable,
   feeTypesTable, parentStudentsTable, classesTable, tenantsTable, usersTable,
+  feeStatementLogsTable,
 } from "@workspace/db";
-import { eq, and, asc, inArray } from "drizzle-orm";
+import { eq, and, asc, inArray, desc } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import PDFDocument from "pdfkit";
@@ -187,6 +188,14 @@ router.get(
       "Content-Disposition",
       `attachment; filename="fee-statement-${student.studentId}-${new Date().toISOString().slice(0, 10)}.pdf"`,
     );
+
+    // Fire-and-forget audit log (non-critical)
+    db.insert(feeStatementLogsTable).values({
+      studentId,
+      triggeredByUserId: req.userId ?? null,
+      action: "PDF_DOWNLOAD",
+    }).catch(() => {});
+
     doc.pipe(res);
 
     // ── Header ──
@@ -520,11 +529,61 @@ router.post(
       ? await sendMailWithConfig(dbSmtp, mailPayload)
       : await sendMail(mailPayload);
 
+    // Audit log
+    await db.insert(feeStatementLogsTable).values({
+      studentId,
+      triggeredByUserId: req.userId ?? null,
+      action: "EMAIL_SENT",
+      sentTo: recipientEmail,
+      deliveryMode: result.deliveryMode,
+    }).catch(() => {});
+
     res.json({
       sent: true,
       sentTo: recipientEmail,
       deliveryMode: result.deliveryMode,
     });
+  },
+);
+
+// ── GET /parent/fee-statement/:studentId/logs — statement dispatch history ─
+
+router.get(
+  "/parent/fee-statement/:studentId/logs",
+  requireAuth,
+  requireFinance,
+  async (req: AuthRequest, res): Promise<void> => {
+    const studentId = parseInt(String(req.params["studentId"]), 10);
+    if (isNaN(studentId)) { res.status(400).json({ error: "BAD_REQUEST" }); return; }
+
+    const logs = await db
+      .select({
+        id: feeStatementLogsTable.id,
+        action: feeStatementLogsTable.action,
+        sentTo: feeStatementLogsTable.sentTo,
+        deliveryMode: feeStatementLogsTable.deliveryMode,
+        createdAt: feeStatementLogsTable.createdAt,
+        triggeredByFirstName: usersTable.firstName,
+        triggeredByLastName: usersTable.lastName,
+        triggeredByRole: usersTable.role,
+      })
+      .from(feeStatementLogsTable)
+      .leftJoin(usersTable, eq(feeStatementLogsTable.triggeredByUserId, usersTable.id))
+      .where(eq(feeStatementLogsTable.studentId, studentId))
+      .orderBy(desc(feeStatementLogsTable.createdAt))
+      .limit(100);
+
+    res.json({ logs: logs.map(l => ({
+      id: l.id,
+      action: l.action,
+      sentTo: l.sentTo,
+      deliveryMode: l.deliveryMode,
+      createdAt: l.createdAt.toISOString(),
+      triggeredBy: l.triggeredByFirstName
+        ? `${l.triggeredByFirstName} ${l.triggeredByLastName}`.trim()
+        : "System",
+      triggeredByRole: l.triggeredByRole ?? null,
+    })) });
   },
 );
 

@@ -685,6 +685,75 @@ function FeeLedgerTab({ studentId, studentCode }: { studentId: number; studentCo
   );
 }
 
+type StatementLogEntry = {
+  id: number;
+  action: "PDF_DOWNLOAD" | "EMAIL_SENT";
+  sentTo: string | null;
+  deliveryMode: string | null;
+  createdAt: string;
+  triggeredBy: string;
+  triggeredByRole: string | null;
+};
+
+function StatementHistoryTab({ studentId }: { studentId: number }) {
+  const { data, isLoading, isError } = useQuery<{ logs: StatementLogEntry[] }>({
+    queryKey: ["statement-history", studentId],
+    queryFn: () => customFetch(`/api/parent/fee-statement/${studentId}/logs`),
+    staleTime: 30_000,
+  });
+
+  if (isLoading) return (
+    <div className="space-y-2 pt-3">
+      {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+    </div>
+  );
+  if (isError) return (
+    <p className="text-sm text-muted-foreground text-center pt-8">Could not load statement history.</p>
+  );
+  if (!data?.logs.length) return (
+    <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground gap-2">
+      <Clock className="h-8 w-8 opacity-30" />
+      <p className="text-sm">No statements have been downloaded or emailed yet.</p>
+    </div>
+  );
+
+  return (
+    <div className="pt-2 space-y-1 max-h-72 overflow-y-auto pr-1">
+      {data.logs.map(log => {
+        const isPdf = log.action === "PDF_DOWNLOAD";
+        return (
+          <div
+            key={log.id}
+            className="flex items-start gap-3 rounded-lg border bg-muted/30 px-3 py-2.5 text-sm"
+          >
+            <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isPdf ? "bg-indigo-100 text-indigo-600" : "bg-green-100 text-green-600"}`}>
+              {isPdf
+                ? <Download className="h-3 w-3" />
+                : <FileText className="h-3 w-3" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium">{isPdf ? "PDF Downloaded" : "Emailed to Parent"}</span>
+                {log.deliveryMode && !isPdf && (
+                  <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${log.deliveryMode === "email" ? "border-green-300 text-green-700 bg-green-50" : "border-amber-300 text-amber-700 bg-amber-50"}`}>
+                    {log.deliveryMode === "email" ? "Delivered" : "Log only"}
+                  </Badge>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+                <span>by {log.triggeredBy}{log.triggeredByRole ? ` (${log.triggeredByRole.replace("_", " ")})` : ""}</span>
+                {log.sentTo && !isPdf && <span>→ {log.sentTo}</span>}
+                <span>·</span>
+                <span>{new Date(log.createdAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ViewDialog({ student, open, onClose }: { student: Student | null; open: boolean; onClose: () => void }) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -787,6 +856,11 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
             <TabsTrigger value="ledger" className="gap-1.5 text-xs">
               <FileText className="h-3.5 w-3.5" /> Fee Ledger
             </TabsTrigger>
+            {canFinance && (
+              <TabsTrigger value="statement-history" className="gap-1.5 text-xs">
+                <Clock className="h-3.5 w-3.5" /> Statement History
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="profile">
@@ -803,6 +877,12 @@ function ViewDialog({ student, open, onClose }: { student: Student | null; open:
           <TabsContent value="ledger">
             <FeeLedgerTab studentId={student.id} studentCode={student.studentId} />
           </TabsContent>
+
+          {canFinance && (
+            <TabsContent value="statement-history">
+              <StatementHistoryTab studentId={student.id} />
+            </TabsContent>
+          )}
         </Tabs>
       </DialogContent>
     </Dialog>
