@@ -2,9 +2,7 @@ import { db } from "@workspace/db";
 import { invoicesTable, notificationsTable, studentsTable, usersTable, parentStudentsTable } from "@workspace/db";
 import { eq, and, lt, ne, sql, inArray } from "drizzle-orm";
 import { logger } from "./logger.js";
-
-const WARNING_DAYS = 7;
-const CRITICAL_DAYS = 30;
+import { getEscalationThresholds } from "./escalation-thresholds.js";
 
 function daysOverdueFrom(dueDateStr: string): number {
   const due = new Date(dueDateStr);
@@ -29,6 +27,8 @@ async function runEscalationCheck(): Promise<void> {
 
   if (!overdueInvoices.length) return;
 
+  const { warningDays, criticalDays } = await getEscalationThresholds();
+
   const studentIds = [...new Set(overdueInvoices.map(i => i.studentId))];
   const students = await db
     .select({ id: studentsTable.id, firstName: studentsTable.firstName, lastName: studentsTable.lastName })
@@ -47,9 +47,9 @@ async function runEscalationCheck(): Promise<void> {
     const studentName = studentMap.get(inv.studentId) ?? `Student #${inv.studentId}`;
     let newLevel: "WARNING" | "CRITICAL" | null = null;
 
-    if (days >= CRITICAL_DAYS && inv.escalationLevel !== "CRITICAL") {
+    if (days >= criticalDays && inv.escalationLevel !== "CRITICAL") {
       newLevel = "CRITICAL";
-    } else if (days >= WARNING_DAYS && inv.escalationLevel === "NORMAL") {
+    } else if (days >= warningDays && inv.escalationLevel === "NORMAL") {
       newLevel = "WARNING";
     }
 

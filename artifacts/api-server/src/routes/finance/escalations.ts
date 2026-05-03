@@ -9,12 +9,9 @@ import { eq, and, inArray, sql, ne } from "drizzle-orm";
 import { requireAuth } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import { logger } from "../../lib/logger.js";
+import { getEscalationThresholds } from "../../lib/escalation-thresholds.js";
 
 const router = Router();
-
-// ── thresholds (days overdue → escalation level) ────────────────────────────
-const WARNING_DAYS = 7;
-const CRITICAL_DAYS = 30;
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 function daysOverdue(dueDateStr: string): number {
@@ -114,6 +111,8 @@ router.post(
         return;
       }
 
+      const { warningDays, criticalDays } = await getEscalationThresholds();
+
       // Fetch student names in one query
       const studentIds = [...new Set(overdueInvoices.map(i => i.studentId))];
       const students = await db
@@ -131,10 +130,10 @@ router.post(
         const studentName = studentMap.get(inv.studentId) ?? `Student #${inv.studentId}`;
 
         let newLevel: "WARNING" | "CRITICAL" | null = null;
-        if (days >= CRITICAL_DAYS && inv.escalationLevel !== "CRITICAL") {
+        if (days >= criticalDays && inv.escalationLevel !== "CRITICAL") {
           newLevel = "CRITICAL";
           escalatedToCritical++;
-        } else if (days >= WARNING_DAYS && inv.escalationLevel === "NORMAL") {
+        } else if (days >= warningDays && inv.escalationLevel === "NORMAL") {
           newLevel = "WARNING";
           escalatedToWarning++;
         } else if (inv.escalationLevel !== "NORMAL") {

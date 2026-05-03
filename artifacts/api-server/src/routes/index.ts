@@ -30,6 +30,7 @@ import budgetsRouter from "./finance/budgets.js";
 import feeSchedulesRouter from "./finance/fee-schedules.js";
 import collectionReportRouter from "./finance/collection-report.js";
 import escalationsRouter from "./finance/escalations.js";
+import escalationSettingsRouter from "./finance/escalation-settings.js";
 import parentFeeStatementRouter from "./parent/fee-statement.js";
 import parentPaymentRequestsRouter from "./parent/payment-requests.js";
 
@@ -66,6 +67,7 @@ router.use(budgetsRouter);
 router.use(feeSchedulesRouter);
 router.use(collectionReportRouter);
 router.use(escalationsRouter);
+router.use(escalationSettingsRouter);
 router.use(parentFeeStatementRouter);
 router.use(parentPaymentRequestsRouter);
 

@@ -27,7 +27,7 @@ import {
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
   TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
   Target, PencilLine, AlertTriangle, ShieldCheck, BookOpen,
-  Upload, FileText, X, Users, BellRing, ShieldAlert,
+  Upload, FileText, X, Users, BellRing, ShieldAlert, Settings,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -2088,12 +2088,30 @@ type RunResult = {
   alreadyEscalated: number;
 };
 
+type ThresholdSettings = { warningDays: number; criticalDays: number; updatedAt?: string };
+
 function EscalationsTab() {
   const { toast } = useToast();
   const [levelFilter, setLevelFilter] = useState<"ALL" | "CRITICAL" | "WARNING">("ALL");
   const [search, setSearch] = useState("");
   const [running, setRunning] = useState(false);
   const [acknowledging, setAcknowledging] = useState<number | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [draftWarning, setDraftWarning] = useState(7);
+  const [draftCritical, setDraftCritical] = useState(30);
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const { data: settings, refetch: refetchSettings } = useQuery<ThresholdSettings>({
+    queryKey: ["escalation-settings"],
+    queryFn: () => authedFetch("/api/finance/escalation-settings"),
+  });
+
+  useEffect(() => {
+    if (settings) {
+      setDraftWarning(settings.warningDays);
+      setDraftCritical(settings.criticalDays);
+    }
+  }, [settings]);
 
   const qkey = ["escalations", levelFilter];
   const { data, isLoading, refetch } = useQuery<EscalationsData>({
@@ -2137,7 +2155,31 @@ function EscalationsTab() {
     }
   }
 
+  async function saveSettings() {
+    if (draftWarning < 1 || draftCritical < 1 || draftWarning >= draftCritical) {
+      toast({ title: "Invalid thresholds", description: "Warning days must be ≥ 1 and less than Critical days", variant: "destructive" });
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      await authedFetch("/api/finance/escalation-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ warningDays: draftWarning, criticalDays: draftCritical }),
+      });
+      toast({ title: "Thresholds saved", description: `WARNING ≥ ${draftWarning}d · CRITICAL ≥ ${draftCritical}d — takes effect on next run` });
+      refetchSettings();
+      setShowSettings(false);
+    } catch {
+      toast({ title: "Save failed", description: "Could not update thresholds", variant: "destructive" });
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
   const s = data?.summary;
+  const wDays = settings?.warningDays ?? 7;
+  const cDays = settings?.criticalDays ?? 30;
 
   return (
     <div className="space-y-5">
@@ -2148,14 +2190,79 @@ function EscalationsTab() {
             <BellRing className="h-5 w-5 text-red-500" /> Overdue Escalations
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Invoices auto-escalated to WARNING (&gt;7 days) or CRITICAL (&gt;30 days) overdue
+            WARNING ≥ {wDays}d overdue · CRITICAL ≥ {cDays}d overdue · auto-runs every 6 hours
           </p>
         </div>
-        <Button onClick={runEscalation} disabled={running} className="gap-2 bg-red-600 hover:bg-red-700 text-white">
-          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          Run Escalation Check
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowSettings(v => !v)}
+            className={cn("gap-1.5", showSettings && "bg-muted")}
+          >
+            <Settings className="h-3.5 w-3.5" />
+            Thresholds
+          </Button>
+          <Button onClick={runEscalation} disabled={running} className="gap-2 bg-red-600 hover:bg-red-700 text-white">
+            {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            Run Check
+          </Button>
+        </div>
       </div>
+
+      {/* Settings panel */}
+      {showSettings && (
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Settings className="h-4 w-4 text-muted-foreground" />
+            Escalation Thresholds
+            <span className="ml-auto text-xs text-muted-foreground font-normal">
+              Changes take effect on the next escalation run
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-5">
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Warning threshold (days overdue)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={draftCritical - 1}
+                value={draftWarning}
+                onChange={e => setDraftWarning(Math.max(1, parseInt(e.target.value) || 1))}
+                className="h-9"
+              />
+              <p className="text-[11px] text-amber-600">Invoices overdue ≥ this many days → WARNING</p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Critical threshold (days overdue)</Label>
+              <Input
+                type="number"
+                min={draftWarning + 1}
+                value={draftCritical}
+                onChange={e => setDraftCritical(Math.max(draftWarning + 1, parseInt(e.target.value) || draftWarning + 1))}
+                className="h-9"
+              />
+              <p className="text-[11px] text-red-600">Invoices overdue ≥ this many days → CRITICAL</p>
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setShowSettings(false);
+                if (settings) { setDraftWarning(settings.warningDays); setDraftCritical(settings.criticalDays); }
+              }}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={saveSettings} disabled={savingSettings} className="gap-1.5">
+              {savingSettings ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              Save Thresholds
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* KPI strip */}
       {isLoading ? (
@@ -2170,7 +2277,7 @@ function EscalationsTab() {
               <span className="text-xs font-medium uppercase tracking-wide">Critical</span>
             </div>
             <p className="text-3xl font-bold text-red-700 tabular-nums">{s.criticalCount}</p>
-            <p className="text-xs text-red-500 mt-1">30+ days overdue</p>
+            <p className="text-xs text-red-500 mt-1">{cDays}+ days overdue</p>
           </div>
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
             <div className="flex items-center gap-2 text-amber-600 mb-1">

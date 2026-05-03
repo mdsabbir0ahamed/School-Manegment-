@@ -68,6 +68,14 @@ export const invoicesTable = pgTable("invoices", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const escalationSettingsTable = pgTable("escalation_settings", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().default(1),
+  warningDays: integer("warning_days").notNull().default(7),
+  criticalDays: integer("critical_days").notNull().default(30),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const transactionsTable = pgTable("transactions", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().default(1),
