@@ -19,6 +19,7 @@ import {
   GraduationCap, Users, BookOpen, CalendarCheck,
   Banknote, AlertCircle, TrendingUp, UserPlus,
   ShieldCheck, ArrowRight, Sparkles, RefreshCw,
+  BellRing, ShieldAlert, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
@@ -107,6 +108,107 @@ function StatCard({ title, value, icon: Icon, sub, color }: {
           </div>
           <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", color ?? "bg-primary/10")}>
             <Icon className={cn("h-4.5 w-4.5", color ? "text-white" : "text-primary")} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Escalation Summary Card ─────────────────────────────────────────────────
+
+interface EscalationSummary {
+  criticalCount: number;
+  warningCount: number;
+  totalEscalated: number;
+  totalAtRisk: number;
+  criticalAtRisk: number;
+  warningAtRisk: number;
+}
+
+function EscalationSummaryCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<EscalationSummary>({
+    queryKey: ["dashboard-escalation-summary"],
+    queryFn: () => customFetch("/api/dashboard/escalation-summary"),
+    refetchInterval: 60_000,
+  });
+
+  const allClear = !isLoading && data && data.totalEscalated === 0;
+  const hasAlerts = !isLoading && data && data.totalEscalated > 0;
+
+  return (
+    <Card className={cn(
+      "border",
+      allClear ? "border-green-200 bg-green-50/40" :
+      data?.criticalCount ? "border-red-200 bg-red-50/30" : "border-amber-200 bg-amber-50/30"
+    )}>
+      <CardContent className="pt-4 pb-4">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          {/* Left — icon + heading */}
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "flex h-9 w-9 items-center justify-center rounded-lg",
+              allClear ? "bg-green-100" : data?.criticalCount ? "bg-red-100" : "bg-amber-100"
+            )}>
+              {allClear
+                ? <ShieldCheck className="h-4.5 w-4.5 text-green-600" />
+                : data?.criticalCount
+                  ? <ShieldAlert className="h-4.5 w-4.5 text-red-600" />
+                  : <BellRing className="h-4.5 w-4.5 text-amber-600" />
+              }
+            </div>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Overdue Escalations</p>
+              {isLoading ? (
+                <Skeleton className="h-5 w-40 mt-1" />
+              ) : allClear ? (
+                <p className="text-sm font-semibold text-green-700">All clear — no escalated invoices</p>
+              ) : (
+                <p className="text-sm font-semibold">
+                  {data!.totalEscalated} invoice{data!.totalEscalated !== 1 ? "s" : ""} escalated
+                  {" · "}৳{data!.totalAtRisk.toLocaleString()} at risk
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Middle — badges */}
+          {hasAlerts && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {data!.criticalCount > 0 && (
+                <div className="flex items-center gap-1.5 rounded-full bg-red-100 border border-red-200 px-3 py-1">
+                  <ShieldAlert className="h-3.5 w-3.5 text-red-600" />
+                  <span className="text-sm font-bold text-red-700 tabular-nums">{data!.criticalCount}</span>
+                  <span className="text-xs text-red-600">CRITICAL</span>
+                </div>
+              )}
+              {data!.warningCount > 0 && (
+                <div className="flex items-center gap-1.5 rounded-full bg-amber-100 border border-amber-200 px-3 py-1">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                  <span className="text-sm font-bold text-amber-700 tabular-nums">{data!.warningCount}</span>
+                  <span className="text-xs text-amber-600">WARNING</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Right — actions */}
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+            </button>
+            {hasAlerts && (
+              <Link href="/finance">
+                <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs border-red-300 text-red-700 hover:bg-red-50">
+                  View Escalations <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </CardContent>
@@ -275,6 +377,7 @@ export default function DashboardPage() {
   const { data: activity } = useGetRecentActivity();
 
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const isFinanceRole = user?.role === "SUPER_ADMIN" || user?.role === "ACCOUNTANT";
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -309,6 +412,9 @@ export default function DashboardPage() {
           </>
         ) : null}
       </div>
+
+      {/* Escalation summary banner — finance roles only */}
+      {isFinanceRole && <EscalationSummaryCard />}
 
       {/* Charts row: Revenue trend + activity/audit */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

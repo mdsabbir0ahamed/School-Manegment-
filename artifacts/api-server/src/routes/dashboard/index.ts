@@ -4,8 +4,9 @@ import {
   usersTable, studentsTable, classesTable,
   attendanceTable, invoicesTable, transactionsTable,
 } from "@workspace/db";
-import { eq, count, sum, and, gte, lte, sql } from "drizzle-orm";
+import { eq, count, sum, and, gte, lte, sql, ne } from "drizzle-orm";
 import { requireAuth } from "../../middlewares/requireAuth.js";
+import { requireFinance } from "../../middlewares/requireRole.js";
 
 const router = Router();
 
@@ -120,6 +121,31 @@ router.get("/dashboard/recent-activity", requireAuth, async (_req, res): Promise
     })),
   ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 10);
   res.json({ activities });
+});
+
+// ── GET /dashboard/escalation-summary ─────────────────────────────────────
+// Returns escalation counts + at-risk amounts for finance-role users.
+router.get("/dashboard/escalation-summary", requireAuth, requireFinance, async (_req, res): Promise<void> => {
+  const [criticalResult, warningResult] = await Promise.all([
+    db.select({ cnt: count(), atRisk: sum(sql<string>`${invoicesTable.totalAmount}::numeric - ${invoicesTable.paidAmount}::numeric`) })
+      .from(invoicesTable)
+      .where(eq(invoicesTable.escalationLevel, "CRITICAL")),
+    db.select({ cnt: count(), atRisk: sum(sql<string>`${invoicesTable.totalAmount}::numeric - ${invoicesTable.paidAmount}::numeric`) })
+      .from(invoicesTable)
+      .where(eq(invoicesTable.escalationLevel, "WARNING")),
+  ]);
+  const criticalCount = criticalResult[0]?.cnt ?? 0;
+  const warningCount = warningResult[0]?.cnt ?? 0;
+  const criticalAtRisk = parseFloat(criticalResult[0]?.atRisk ?? "0");
+  const warningAtRisk = parseFloat(warningResult[0]?.atRisk ?? "0");
+  res.json({
+    criticalCount,
+    warningCount,
+    totalEscalated: criticalCount + warningCount,
+    totalAtRisk: criticalAtRisk + warningAtRisk,
+    criticalAtRisk,
+    warningAtRisk,
+  });
 });
 
 export default router;
