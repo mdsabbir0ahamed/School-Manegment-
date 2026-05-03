@@ -4186,6 +4186,7 @@ export default function FinancePage() {
   const [remindedIds, setRemindedIds] = useState<Set<number>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchPayOpen, setBatchPayOpen] = useState(false);
+  const [downloadingReceiptId, setDownloadingReceiptId] = useState<number | null>(null);
   const { toast } = useToast();
 
   const sendReminder = async (invoiceId: number) => {
@@ -4201,6 +4202,30 @@ export default function FinancePage() {
       toast({ title: "Failed to send reminder", variant: "destructive" });
     } finally {
       setRemindingId(null);
+    }
+  };
+
+  const downloadReceipt = async (txnId: number) => {
+    setDownloadingReceiptId(txnId);
+    try {
+      const res = await fetch(`/api/finance/transactions/${txnId}/receipt`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("erp_token")}` },
+      });
+      if (!res.ok) throw new Error("Failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `receipt-TXN-${txnId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: "Receipt downloaded", description: `TXN-${txnId}.pdf` });
+    } catch {
+      toast({ title: "Failed to download receipt", variant: "destructive" });
+    } finally {
+      setDownloadingReceiptId(null);
     }
   };
 
@@ -4455,22 +4480,35 @@ export default function FinancePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  {["Student", "Invoice", "Amount", "Method", "Txn ID", "Date"].map(h => (
+                  {["Student", "Invoice", "Amount", "Method", "Txn ID", "Date", "Receipt"].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {transactionsData?.transactions.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">No transactions yet</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">No transactions yet</td></tr>
                 ) : transactionsData?.transactions.map(t => (
                   <tr key={t.id} className="hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-3 font-medium">{t.studentName}</td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{t.invoiceId}</td>
                     <td className="px-4 py-3 tabular-nums font-semibold text-green-600">৳{t.amountPaid.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{t.method.replace("_", " ")}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{t.method.replace(/_/g, " ")}</td>
                     <td className="px-4 py-3 font-mono text-xs">{t.transactionId ?? "-"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{new Date(t.paidAt).toLocaleDateString()}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => downloadReceipt(t.id)}
+                        disabled={downloadingReceiptId === t.id}
+                        className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium disabled:opacity-50 disabled:cursor-wait whitespace-nowrap"
+                        title="Download PDF receipt"
+                      >
+                        {downloadingReceiptId === t.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <FileText className="h-3 w-3" />}
+                        Receipt
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

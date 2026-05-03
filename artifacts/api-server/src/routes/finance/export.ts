@@ -331,4 +331,126 @@ router.get(
   },
 );
 
+// ── Payment Receipt (single transaction, A5 PDF) ──────────────────────────
+
+router.get(
+  "/finance/transactions/:id/receipt",
+  requireAuth,
+  requireFinance,
+  async (req, res): Promise<void> => {
+    const id = parseInt(String(req.params["id"]), 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+    const [txn] = await db.select().from(transactionsTable).where(eq(transactionsTable.id, id)).limit(1);
+    if (!txn) { res.status(404).json({ error: "Transaction not found" }); return; }
+
+    const [[invoice], [student], [tenant]] = await Promise.all([
+      db.select().from(invoicesTable).where(eq(invoicesTable.id, txn.invoiceId)).limit(1),
+      db.select({ firstName: studentsTable.firstName, lastName: studentsTable.lastName })
+        .from(studentsTable).where(eq(studentsTable.id, txn.studentId)).limit(1),
+      db.select().from(tenantsTable).limit(1),
+    ]);
+
+    const [feeType] = invoice
+      ? await db.select({ name: feeTypesTable.name }).from(feeTypesTable)
+          .where(eq(feeTypesTable.id, invoice.feeTypeId)).limit(1)
+      : [null];
+
+    const schoolName = tenant?.name ?? "Smart School ERP";
+    const studentName = student ? `${student.firstName} ${student.lastName}` : "Unknown";
+    const amountPaid = parseFloat(txn.amountPaid);
+    const paidAt = new Date(txn.paidAt);
+    const formattedDate = paidAt.toLocaleDateString("en-US", { dateStyle: "long" });
+    const formattedTime = paidAt.toLocaleTimeString("en-US", { timeStyle: "short" });
+
+    const doc = new PDFDocument({ margin: 30, size: "A5", bufferPages: false });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="receipt-TXN-${id}.pdf"`);
+    doc.pipe(res);
+
+    const W = doc.page.width;
+    const CW = W - 60;
+    const GREEN = "#059669";
+    const PRIMARY = "#4F46E5";
+
+    // ── Header banner ──────────────────────────────────────────────────────
+    doc.rect(0, 0, W, 58).fill(PRIMARY);
+    doc.fillColor("#FFFFFF").fontSize(15).font("Helvetica-Bold")
+      .text(schoolName, 30, 11, { width: CW });
+    doc.fontSize(8.5).font("Helvetica")
+      .text("PAYMENT RECEIPT", 30, 32, { width: CW });
+    doc.fillColor("#374151");
+
+    let y = 68;
+
+    // ── Receipt meta ───────────────────────────────────────────────────────
+    doc.fontSize(7.5).fillColor("#6B7280").font("Helvetica")
+      .text(`Receipt No: TXN-${id}`, 30, y)
+      .text(`${formattedDate}  \u00b7  ${formattedTime}`, 30, y, { width: CW, align: "right" });
+    y += 13;
+    hrLine(doc, y);
+    y += 11;
+
+    // ── Received from ──────────────────────────────────────────────────────
+    doc.fontSize(6.5).fillColor("#9CA3AF").font("Helvetica").text("RECEIVED FROM", 30, y);
+    y += 9;
+    doc.fontSize(13).fillColor("#111827").font("Helvetica-Bold").text(studentName, 30, y);
+    y += 20;
+    hrLine(doc, y);
+    y += 10;
+
+    // ── Payment details grid ───────────────────────────────────────────────
+    const details: [string, string][] = [
+      ["Invoice No.", invoice?.invoiceNumber ?? "\u2014"],
+      ["Fee Type", feeType?.name ?? "\u2014"],
+    ];
+    if (invoice?.month) details.push(["Period", invoice.month]);
+    details.push(["Payment Date", formattedDate]);
+    details.push(["Payment Method", txn.method.replace(/_/g, " ")]);
+    if (txn.transactionId) details.push(["Reference ID", txn.transactionId]);
+    if (txn.notes) details.push(["Notes", txn.notes]);
+
+    for (const [label, value] of details) {
+      doc.fontSize(7.5).fillColor("#9CA3AF").font("Helvetica").text(label, 30, y, { width: 120 });
+      doc.fontSize(7.5).fillColor("#111827").font("Helvetica-Bold").text(value, 155, y, { width: CW - 125 });
+      y += 14;
+    }
+
+    y += 8;
+    hrLine(doc, y);
+    y += 14;
+
+    // ── Amount box ─────────────────────────────────────────────────────────
+    const BOX_H = 60;
+    doc.rect(30, y, CW, BOX_H).fill("#F0FDF4").stroke("#BBF7D0");
+    doc.fontSize(8).fillColor(GREEN).font("Helvetica")
+      .text("AMOUNT PAID", 0, y + 9, { width: W, align: "center" });
+    const amtText = `BDT ${amountPaid.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+    doc.fontSize(24).fillColor(GREEN).font("Helvetica-Bold")
+      .text(amtText, 0, y + 22, { width: W, align: "center" });
+
+    // PAID circle stamp
+    const stampCX = W - 52;
+    const stampCY = y + BOX_H / 2;
+    doc.save().circle(stampCX, stampCY, 20).strokeColor(GREEN).lineWidth(2).stroke().restore();
+    doc.fontSize(10).fillColor(GREEN).font("Helvetica-Bold")
+      .text("PAID", stampCX - 20, stampCY - 7, { width: 40, align: "center" });
+
+    // ── Footer ─────────────────────────────────────────────────────────────
+    const footerY = doc.page.height - 38;
+    hrLine(doc, footerY - 6);
+    doc.fontSize(6.5).fillColor("#9CA3AF").font("Helvetica")
+      .text(
+        "This is a computer-generated receipt and does not require a signature.",
+        30, footerY, { width: CW, align: "center" },
+      )
+      .text(
+        `Generated: ${new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}  \u00b7  ${schoolName}`,
+        30, footerY + 11, { width: CW, align: "center" },
+      );
+
+    doc.end();
+  },
+);
+
 export default router;
