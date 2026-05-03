@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   useListInvoices, useCreateInvoice, useListFeeTypes,
   useListTransactions, useCreateTransaction, useListStudents,
@@ -26,6 +26,7 @@ import {
   Layers, SkipForward, ListChecks, Tag, Percent, ToggleLeft, ToggleRight, Trash2, UserCheck,
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
   TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
+  Target, PencilLine, AlertTriangle, ShieldCheck,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -786,6 +787,328 @@ function RemindersTab() {
           <li className="flex gap-2"><span className="text-indigo-500 font-bold">4.</span> "Send Now" bypasses the daily limit for manual testing or urgent batches.</li>
         </ul>
       </div>
+    </div>
+  );
+}
+
+// ── Budget Tab ─────────────────────────────────────────────────────────────
+
+type BudgetRow = {
+  id: number | null;
+  category: ExpenseCategory;
+  year: number;
+  budget: number | null;
+  actual: number;
+  variance: number | null;
+  variancePct: number | null;
+  notes: string | null;
+  updatedAt: string | null;
+};
+
+type BudgetData = {
+  year: number;
+  rows: BudgetRow[];
+  totals: { budget: number; actual: number; variance: number };
+};
+
+function EditBudgetDialog({ row, year, open, onClose, onSaved }: {
+  row: BudgetRow | null; year: number;
+  open: boolean; onClose: () => void; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [amount, setAmount] = useState("");
+  const [notes, setNotes]   = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (row && open) {
+      setAmount(row.budget !== null ? String(row.budget) : "");
+      setNotes(row.notes ?? "");
+    }
+  }, [row, open]);
+
+  const handleClose = () => { setAmount(""); setNotes(""); onClose(); };
+
+  const handleSave = async () => {
+    if (!row) return;
+    const val = parseFloat(amount);
+    if (isNaN(val) || val < 0) {
+      toast({ title: "Enter a valid budget amount (0 or more)", variant: "destructive" }); return;
+    }
+    setLoading(true);
+    try {
+      await authedFetch("/api/finance/budgets", {
+        method: "PUT",
+        body: JSON.stringify({ category: row.category, year, budgetAmount: val, notes: notes.trim() || undefined }),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: "Budget saved", description: `${row.category}: ৳${val.toLocaleString()} for ${year}` });
+      onSaved(); handleClose();
+    } catch (e: any) {
+      toast({ title: "Failed to save budget", description: e.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  const handleClear = async () => {
+    if (!row?.id) return;
+    setLoading(true);
+    try {
+      await authedFetch(`/api/finance/budgets/${row.id}`, { method: "DELETE" });
+      toast({ title: "Budget removed" });
+      onSaved(); handleClose();
+    } catch (e: any) {
+      toast({ title: "Failed to remove budget", description: e.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  if (!row) return null;
+  const catName = row.category.charAt(0) + row.category.slice(1).toLowerCase();
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="inline-block h-3 w-3 rounded-full" style={{ background: CATEGORY_COLORS[row.category] }} />
+            {catName} Budget — {year}
+          </DialogTitle>
+          {row.actual > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Current spend: <span className="font-semibold text-foreground">৳{row.actual.toLocaleString()}</span>
+            </p>
+          )}
+        </DialogHeader>
+        <div className="space-y-3 py-1">
+          <div className="space-y-1.5">
+            <Label>Annual Budget (৳) *</Label>
+            <Input
+              type="number" min="0" step="100"
+              placeholder={`e.g. ${row.category === "SALARY" ? "3000000" : "50000"}`}
+              value={amount} onChange={e => setAmount(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Notes <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
+            <Input placeholder="Any detail about this budget line…" value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          {row.id && (
+            <Button variant="outline" onClick={handleClear} disabled={loading}
+              className="text-red-600 hover:text-red-700 border-red-200 hover:bg-red-50 mr-auto">
+              Remove
+            </Button>
+          )}
+          <Button variant="outline" onClick={handleClose} disabled={loading}>Cancel</Button>
+          <Button onClick={handleSave} disabled={loading}>
+            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : "Save Budget"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BudgetTab() {
+  const qc = useQueryClient();
+  const [year, setYear]         = useState(new Date().getFullYear());
+  const [editRow, setEditRow]   = useState<BudgetRow | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+
+  const { data, isLoading, refetch } = useQuery<BudgetData>({
+    queryKey: ["budgets", year],
+    queryFn: () => authedFetch(`/api/finance/budgets?year=${year}`),
+  });
+
+  const rows    = data?.rows ?? [];
+  const totals  = data?.totals;
+  const budgetedRows   = rows.filter(r => r.budget !== null);
+  const overBudget     = budgetedRows.filter(r => (r.variance ?? 0) > 0);
+  const totalBudgeted  = budgetedRows.length;
+
+  const openEdit = (row: BudgetRow) => { setEditRow(row); setEditOpen(true); };
+
+  const totalVariancePct = (totals?.budget ?? 0) > 0
+    ? ((totals!.actual - totals!.budget) / totals!.budget) * 100
+    : null;
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <Target className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Annual Expense Budgets</h2>
+          <span className="text-xs text-muted-foreground">— click any row to set or edit</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => setYear(y => y - 1)} className="p-1.5 rounded border border-border hover:bg-muted transition-colors">
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <span className="text-sm font-bold tabular-nums w-14 text-center">{year}</span>
+          <button onClick={() => setYear(y => y + 1)} className="p-1.5 rounded border border-border hover:bg-muted transition-colors">
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* KPI strip */}
+      {!isLoading && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Total Budget",   value: `৳${(totals?.budget ?? 0).toLocaleString()}`,  cls: "text-indigo-600",  icon: <Target className="h-4 w-4 text-indigo-400" /> },
+            { label: "Actual Spend",   value: `৳${(totals?.actual ?? 0).toLocaleString()}`,  cls: "text-foreground",  icon: <Receipt className="h-4 w-4 text-muted-foreground" /> },
+            { label: "Variance",
+              value: totals?.budget
+                ? ((totals.variance ?? 0) >= 0 ? `+৳${Math.abs(totals.variance).toLocaleString()}` : `-৳${Math.abs(totals.variance).toLocaleString()}`)
+                : "—",
+              cls: (totals?.variance ?? 0) <= 0 ? "text-green-600" : "text-red-600",
+              icon: (totals?.variance ?? 0) <= 0
+                ? <ShieldCheck className="h-4 w-4 text-green-500" />
+                : <AlertTriangle className="h-4 w-4 text-red-500" /> },
+            { label: "Over Budget",    value: `${overBudget.length} / ${totalBudgeted} categories`, cls: overBudget.length > 0 ? "text-red-600 text-base" : "text-green-600 text-base",
+              icon: <AlertTriangle className="h-4 w-4 text-muted-foreground" /> },
+          ].map(s => (
+            <div key={s.label} className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">{s.label}</p>
+                {s.icon}
+              </div>
+              <p className={cn("text-xl font-bold tabular-nums", s.cls)}>{s.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Info banner */}
+      <div className="flex items-start gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-xs text-indigo-800">
+        <PencilLine className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+        <span>Set annual budgets per expense category. Actual spend is compared against your budget in real time. <strong>Actual</strong> = only PAID expenses count toward spend.</span>
+      </div>
+
+      {/* Budget table */}
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30">
+              {["Category", "Annual Budget", "Actual Spend", "Remaining", "Progress", ""].map(h => (
+                <th key={h} className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {isLoading
+              ? Array.from({ length: 10 }).map((_, i) => (
+                  <tr key={i}>{Array.from({ length: 6 }).map((_, j) => (
+                    <td key={j} className="px-4 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td>
+                  ))}</tr>
+                ))
+              : rows.map(row => {
+                  const pct = row.budget && row.budget > 0 ? Math.min((row.actual / row.budget) * 100, 100) : 0;
+                  const over = (row.variance ?? 0) > 0;
+                  const remaining = row.budget !== null ? row.budget - row.actual : null;
+                  const catName = row.category.charAt(0) + row.category.slice(1).toLowerCase();
+
+                  return (
+                    <tr key={row.category}
+                      onClick={() => openEdit(row)}
+                      className="hover:bg-muted/30 transition-colors cursor-pointer group">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full shrink-0" style={{ background: CATEGORY_COLORS[row.category] }} />
+                          <span className="font-medium">{catName}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {row.budget !== null
+                          ? <span className="font-medium tabular-nums text-indigo-700">৳{row.budget.toLocaleString()}</span>
+                          : <span className="text-xs text-muted-foreground italic">Not set — click to add</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={cn("font-medium tabular-nums", row.actual > 0 ? "text-foreground" : "text-muted-foreground")}>
+                          {row.actual > 0 ? `৳${row.actual.toLocaleString()}` : "৳0"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {remaining !== null ? (
+                          <span className={cn("font-semibold tabular-nums text-sm", over ? "text-red-600" : "text-green-600")}>
+                            {over
+                              ? <span className="flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 shrink-0" />+৳{Math.abs(remaining).toLocaleString()} over</span>
+                              : `৳${remaining.toLocaleString()} left`}
+                          </span>
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-4 py-3 min-w-[140px]">
+                        {row.budget !== null ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                              <span>{Math.min((row.actual / row.budget) * 100, 999).toFixed(1)}% used</span>
+                              {over && <span className="text-red-500 font-semibold">OVER</span>}
+                            </div>
+                            <div className="h-2 rounded-full bg-muted overflow-visible relative">
+                              <div
+                                className={cn("h-full rounded-full transition-all", over ? "bg-red-500" : pct > 80 ? "bg-yellow-500" : "bg-green-500")}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="h-2 rounded-full bg-muted/50 w-full" />
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <PencilLine className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </td>
+                    </tr>
+                  );
+                })}
+          </tbody>
+          {/* Totals footer */}
+          {!isLoading && totalBudgeted > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-border bg-muted/40 font-bold">
+                <td className="px-4 py-3 text-sm">Total ({totalBudgeted} budgeted)</td>
+                <td className="px-4 py-3 tabular-nums text-indigo-700">৳{(totals?.budget ?? 0).toLocaleString()}</td>
+                <td className="px-4 py-3 tabular-nums">{totals?.actual ? `৳${totals.actual.toLocaleString()}` : "৳0"}</td>
+                <td className="px-4 py-3">
+                  {totals?.budget ? (
+                    <span className={cn("font-bold", (totals.variance ?? 0) <= 0 ? "text-green-600" : "text-red-600")}>
+                      {(totals.variance ?? 0) <= 0
+                        ? `৳${Math.abs(totals.variance).toLocaleString()} under`
+                        : `৳${Math.abs(totals.variance).toLocaleString()} over`}
+                    </span>
+                  ) : "—"}
+                </td>
+                <td className="px-4 py-3 min-w-[140px]">
+                  {totals?.budget && totals.budget > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] text-muted-foreground">
+                        {((totals.actual / totals.budget) * 100).toFixed(1)}% of total budget
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className={cn("h-full rounded-full",
+                            (totalVariancePct ?? 0) > 0 ? "bg-red-500" : (totalVariancePct ?? 0) > -20 ? "bg-yellow-500" : "bg-green-500")}
+                          style={{ width: `${Math.min((totals.actual / totals.budget) * 100, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      <EditBudgetDialog
+        row={editRow} year={year}
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => { refetch(); qc.invalidateQueries({ queryKey: ["budgets"] }); }}
+      />
     </div>
   );
 }
@@ -2177,6 +2500,9 @@ export default function FinancePage() {
           <TabsTrigger value="pnl" className="flex items-center gap-1.5">
             <Activity className="h-3.5 w-3.5" /> P&amp;L
           </TabsTrigger>
+          <TabsTrigger value="budgets" className="flex items-center gap-1.5">
+            <Target className="h-3.5 w-3.5" /> Budgets
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -2333,6 +2659,11 @@ export default function FinancePage() {
         {/* ── P&L tab ── */}
         <TabsContent value="pnl" className="mt-4">
           <PnLTab />
+        </TabsContent>
+
+        {/* ── Budgets tab ── */}
+        <TabsContent value="budgets" className="mt-4">
+          <BudgetTab />
         </TabsContent>
       </Tabs>
 
