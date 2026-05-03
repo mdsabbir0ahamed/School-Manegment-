@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import {
   useListStudents, useCreateStudent, useUpdateStudent, useDeleteStudent,
   useListClasses, getListStudentsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -27,7 +26,7 @@ import { customFetch } from "@workspace/api-client-react";
 import {
   Search, Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight,
   Eye, Lock, Upload, CheckCircle2, XCircle, AlertCircle,
-  ChevronDown, ChevronUp, Clock, FileText,
+  ChevronDown, ChevronUp, Clock, FileText, CreditCard,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -348,11 +347,12 @@ const LEDGER_STATUS: Record<string, { label: string; cls: string }> = {
   CANCELLED: { label: "Cancelled", cls: "bg-gray-100 text-gray-500" },
 };
 
-function LedgerInvoiceRow({ inv }: { inv: LedgerInvoice }) {
+function LedgerInvoiceRow({ inv, canPay, onPay }: { inv: LedgerInvoice; canPay: boolean; onPay: (inv: LedgerInvoice) => void }) {
   const [expanded, setExpanded] = useState(false);
   const s = LEDGER_STATUS[inv.status] ?? LEDGER_STATUS["PENDING"]!;
   const due = Math.max(0, inv.totalAmount - inv.paidAmount);
   const hasTx = inv.transactions.length > 0;
+  const showPayBtn = canPay && due > 0 && inv.status !== "CANCELLED" && inv.status !== "PAID";
 
   return (
     <>
@@ -383,10 +383,20 @@ function LedgerInvoiceRow({ inv }: { inv: LedgerInvoice }) {
             {s.label}
           </span>
         </td>
+        <td className="px-3 py-2.5">
+          {showPayBtn && (
+            <button
+              onClick={e => { e.stopPropagation(); onPay(inv); }}
+              className="flex items-center gap-1 rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/20 transition-colors whitespace-nowrap"
+            >
+              <CreditCard className="h-2.5 w-2.5" /> Pay
+            </button>
+          )}
+        </td>
       </tr>
       {expanded && hasTx && (
         <tr>
-          <td colSpan={8} className="bg-indigo-50/40 px-3 pb-3 pt-0">
+          <td colSpan={9} className="bg-indigo-50/40 px-3 pb-3 pt-0">
             <div className="ml-6 border border-indigo-100 rounded-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead>
@@ -420,8 +430,124 @@ function LedgerInvoiceRow({ inv }: { inv: LedgerInvoice }) {
   );
 }
 
+// ── Record Payment Dialog (inline from ledger) ──────────────────────────────
+
+function RecordPaymentDialog({
+  inv, open, onClose, studentId,
+}: { inv: LedgerInvoice | null; open: boolean; onClose: () => void; studentId: number }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("CASH");
+  const [transactionId, setTransactionId] = useState("");
+  const [notes, setNotes] = useState("");
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().split("T")[0]!);
+
+  useEffect(() => {
+    if (inv) {
+      setAmount(String(Math.max(0, inv.totalAmount - inv.paidAmount)));
+      setMethod("CASH");
+      setTransactionId("");
+      setNotes("");
+      setPaidAt(new Date().toISOString().split("T")[0]!);
+    }
+  }, [inv?.id]);
+
+  const outstanding = inv ? Math.max(0, inv.totalAmount - inv.paidAmount) : 0;
+  const amtNum = parseFloat(amount);
+  const amountValid = !isNaN(amtNum) && amtNum > 0 && amtNum <= outstanding + 0.001;
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      customFetch<{ id: number }>("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: inv!.id,
+          amountPaid: amtNum,
+          method,
+          transactionId: transactionId || undefined,
+          notes: notes || undefined,
+          paidAt,
+        }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["student-fee-ledger", studentId] });
+      toast({ title: "Payment recorded successfully" });
+      onClose();
+    },
+    onError: () => toast({ title: "Failed to record payment", variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CreditCard className="h-4 w-4" /> Record Payment
+          </DialogTitle>
+          {inv && (
+            <p className="text-sm text-muted-foreground">
+              {inv.invoiceNumber} · {inv.feeTypeName}{inv.month ? ` · ${inv.month}` : ""}
+              <br />
+              Outstanding: <span className="font-semibold text-red-600">৳{outstanding.toLocaleString()}</span>
+            </p>
+          )}
+        </DialogHeader>
+        <div className="space-y-3 py-1">
+          <div className="space-y-1">
+            <Label>Amount Paid *</Label>
+            <Input
+              type="number" step="0.01" min="0.01"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              placeholder={`Max ৳${outstanding.toLocaleString()}`}
+            />
+            {!isNaN(amtNum) && amtNum > outstanding + 0.001 && (
+              <p className="text-xs text-destructive">Exceeds outstanding ৳{outstanding.toLocaleString()}</p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label>Payment Method *</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {["CASH", "BANK_TRANSFER", "MOBILE_BANKING", "CHEQUE"].map(m => (
+                  <SelectItem key={m} value={m}>{m.replace(/_/g, " ")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Payment Date *</Label>
+            <Input type="date" value={paidAt} onChange={e => setPaidAt(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>Transaction / Reference ID</Label>
+            <Input value={transactionId} onChange={e => setTransactionId(e.target.value)} placeholder="Optional" />
+          </div>
+          <div className="space-y-1">
+            <Label>Notes</Label>
+            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={!amountValid || mutation.isPending}>
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Record Payment
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FeeLedgerTab({ studentId }: { studentId: number }) {
+  const { user } = useAuth();
+  const canPay = user?.role === "SUPER_ADMIN" || user?.role === "ACCOUNTANT";
   const [yearFilter, setYearFilter] = useState("all");
+  const [payInv, setPayInv] = useState<LedgerInvoice | null>(null);
   const { data, isLoading, isError } = useQuery<FeeLedger>({
     queryKey: ["student-fee-ledger", studentId],
     queryFn: () => customFetch(`/api/students/${studentId}/fee-ledger`),
@@ -494,18 +620,27 @@ function FeeLedgerTab({ studentId }: { studentId: number }) {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
                 <tr>
-                  {["Invoice #", "Fee Type", "Month", "Billed", "Paid", "Due", "Due Date", "Status"].map(h => (
+                  {[...["Invoice #", "Fee Type", "Month", "Billed", "Paid", "Due", "Due Date", "Status"], ...(canPay ? ["Action"] : [])].map(h => (
                     <th key={h} className="px-3 py-2 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(inv => <LedgerInvoiceRow key={inv.id} inv={inv} />)}
+                {filtered.map(inv => (
+                  <LedgerInvoiceRow key={inv.id} inv={inv} canPay={canPay} onPay={setPayInv} />
+                ))}
               </tbody>
             </table>
           </div>
         )}
       </div>
+
+      <RecordPaymentDialog
+        inv={payInv}
+        open={!!payInv}
+        onClose={() => setPayInv(null)}
+        studentId={studentId}
+      />
     </div>
   );
 }
