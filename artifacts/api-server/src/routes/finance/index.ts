@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { feeTypesTable, invoicesTable, transactionsTable, studentsTable, classesTable } from "@workspace/db";
 import { eq, and, count, inArray } from "drizzle-orm";
 import { applyDiscount } from "./discounts.js";
+import { getScheduledAmount } from "./fee-schedules.js";
 import { requireAuth, type AuthRequest } from "../../middlewares/requireAuth.js";
 import { requireFinance } from "../../middlewares/requireRole.js";
 import { audit } from "../../lib/audit.js";
@@ -202,7 +203,18 @@ router.post("/invoices/bulk-generate", requireAuth, requireFinance, async (req: 
   const [feeType] = await db.select().from(feeTypesTable).where(eq(feeTypesTable.id, feeTypeId)).limit(1);
   if (!feeType) { res.status(404).json({ error: "FEE_TYPE_NOT_FOUND" }); return; }
 
-  const unitAmount = amount ?? parseFloat(feeType.amount);
+  // Derive academic year from dueDate (e.g. "2025-26" from a date in 2026 means FY started 2025)
+  const dueYear  = parseInt(dueDate.slice(0, 4), 10);
+  const dueMonth = parseInt(dueDate.slice(5, 7), 10);
+  // Academic year: July→June cycle (month >= 7 → starts this year, else started last year)
+  const ayStart  = dueMonth >= 7 ? dueYear : dueYear - 1;
+  const academicYear = `${ayStart}-${String(ayStart + 1).slice(-2)}`;
+
+  // Look up class-specific fee schedule; fall back to fee type default, then manual override
+  const scheduleDefault = amount !== undefined
+    ? amount
+    : (await getScheduledAmount(classId, feeTypeId, academicYear, parseFloat(feeType.amount))).amount;
+  const unitAmount = scheduleDefault;
 
   // All ACTIVE students in the class
   const students = await db.select({ id: studentsTable.id, firstName: studentsTable.firstName, lastName: studentsTable.lastName })

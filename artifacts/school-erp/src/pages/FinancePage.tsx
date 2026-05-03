@@ -26,7 +26,7 @@ import {
   Layers, SkipForward, ListChecks, Tag, Percent, ToggleLeft, ToggleRight, Trash2, UserCheck,
   Receipt, TrendingDown, BarChart3, CheckCheck, Circle,
   TrendingUp, ArrowUpRight, ArrowDownRight, Minus, Activity,
-  Target, PencilLine, AlertTriangle, ShieldCheck,
+  Target, PencilLine, AlertTriangle, ShieldCheck, BookOpen,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -787,6 +787,369 @@ function RemindersTab() {
           <li className="flex gap-2"><span className="text-indigo-500 font-bold">4.</span> "Send Now" bypasses the daily limit for manual testing or urgent batches.</li>
         </ul>
       </div>
+    </div>
+  );
+}
+
+// ── Fee Schedules Tab ──────────────────────────────────────────────────────
+
+type FeeSchedule = {
+  id: number; classId: number; className: string; gradeLevel: number;
+  feeTypeId: number; feeTypeName: string; defaultAmount: number | null;
+  academicYear: string; amount: number; isActive: boolean;
+  notes: string | null; createdBy: string | null; createdAt: string;
+};
+
+function currentAcademicYear(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const start = m >= 7 ? y : y - 1;
+  return `${start}-${String(start + 1).slice(-2)}`;
+}
+
+function AddScheduleDialog({ open, onClose, onCreated }: {
+  open: boolean; onClose: () => void; onCreated: () => void;
+}) {
+  const { toast } = useToast();
+  const [classId, setClassId]         = useState("");
+  const [feeTypeId, setFeeTypeId]     = useState("");
+  const [academicYear, setAcYear]     = useState(currentAcademicYear());
+  const [amount, setAmount]           = useState("");
+  const [notes, setNotes]             = useState("");
+  const [loading, setLoading]         = useState(false);
+
+  const { data: classesData } = useQuery<{ classes: ClassItem[] }>({
+    queryKey: ["classes-list"], queryFn: () => authedFetch("/api/classes"), enabled: open,
+  });
+  const { data: feeTypesData } = useQuery<{ feeTypes: FeeTypeItem[] }>({
+    queryKey: ["fee-types-list"], queryFn: () => authedFetch("/api/fee-types"), enabled: open,
+  });
+
+  const selectedFeeType = feeTypesData?.feeTypes.find(f => String(f.id) === feeTypeId);
+
+  const reset = () => {
+    setClassId(""); setFeeTypeId(""); setAcYear(currentAcademicYear());
+    setAmount(""); setNotes("");
+  };
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleSubmit = async () => {
+    if (!classId || !feeTypeId || !academicYear || !amount) {
+      toast({ title: "All fields are required", variant: "destructive" }); return;
+    }
+    const val = parseFloat(amount);
+    if (isNaN(val) || val < 0) {
+      toast({ title: "Enter a valid amount", variant: "destructive" }); return;
+    }
+    setLoading(true);
+    try {
+      await authedFetch("/api/finance/fee-schedules", {
+        method: "POST",
+        body: JSON.stringify({
+          classId: Number(classId), feeTypeId: Number(feeTypeId),
+          academicYear, amount: val, notes: notes.trim() || undefined,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: "Fee schedule saved", description: `৳${val.toLocaleString()} for ${academicYear}` });
+      onCreated(); handleClose();
+    } catch (e: any) {
+      toast({ title: "Failed to save", description: e.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BookOpen className="h-4 w-4" /> Set Class Fee Schedule
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Class-specific amounts override the fee type default when bulk-generating invoices.
+          </p>
+        </DialogHeader>
+
+        <div className="space-y-3 py-1">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Class *</Label>
+              <Select value={classId} onValueChange={setClassId}>
+                <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
+                <SelectContent>
+                  {[...(classesData?.classes ?? [])].sort((a, b) => a.gradeLevel - b.gradeLevel).map(c => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      Grade {c.gradeLevel} — {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Fee Type *</Label>
+              <Select value={feeTypeId} onValueChange={v => { setFeeTypeId(v); if (!amount) setAmount(String(feeTypesData?.feeTypes.find(f => String(f.id) === v)?.amount ?? "")); }}>
+                <SelectTrigger><SelectValue placeholder="Select fee type" /></SelectTrigger>
+                <SelectContent>
+                  {(feeTypesData?.feeTypes ?? []).map(f => (
+                    <SelectItem key={f.id} value={String(f.id)}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Academic Year *</Label>
+              <Input placeholder="e.g. 2025-26" value={academicYear} onChange={e => setAcYear(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Amount (৳) *</Label>
+              <Input type="number" min="0" step="50" placeholder="e.g. 4500"
+                value={amount} onChange={e => setAmount(e.target.value)} />
+              {selectedFeeType && (
+                <p className="text-[10px] text-muted-foreground">
+                  Default: ৳{Number(selectedFeeType.amount).toLocaleString()}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Notes <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
+            <Input placeholder="e.g. Reduced rate for Grade 1 students…" value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose} disabled={loading}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={loading}>
+            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : <><BookOpen className="mr-2 h-4 w-4" />Save Schedule</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FeeSchedulesTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [addOpen, setAddOpen]         = useState(false);
+  const [yearFilter, setYearFilter]   = useState(currentAcademicYear());
+  const [classFilter, setClassFilter] = useState("all");
+  const [togglingId, setTogglingId]   = useState<number | null>(null);
+  const [deletingId, setDeletingId]   = useState<number | null>(null);
+
+  const { data: classesData } = useQuery<{ classes: ClassItem[] }>({
+    queryKey: ["classes-list"], queryFn: () => authedFetch("/api/classes"),
+  });
+  const { data, isLoading, refetch } = useQuery<{ schedules: FeeSchedule[]; total: number }>({
+    queryKey: ["fee-schedules", yearFilter, classFilter],
+    queryFn: () => {
+      const p = new URLSearchParams();
+      if (yearFilter) p.set("academicYear", yearFilter);
+      if (classFilter !== "all") p.set("classId", classFilter);
+      return authedFetch(`/api/finance/fee-schedules?${p}`);
+    },
+  });
+
+  const schedules = data?.schedules ?? [];
+
+  // Build year options: current + 2 back + 1 forward
+  const now = new Date();
+  const curStart = (now.getMonth() + 1) >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  const yearOptions = [-2, -1, 0, 1].map(d => {
+    const s = curStart + d;
+    return `${s}-${String(s + 1).slice(-2)}`;
+  });
+
+  const refetchAll = () => { refetch(); qc.invalidateQueries({ queryKey: ["fee-schedules"] }); };
+
+  const toggleActive = async (s: FeeSchedule) => {
+    setTogglingId(s.id);
+    try {
+      await authedFetch(`/api/finance/fee-schedules/${s.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive: !s.isActive }),
+        headers: { "Content-Type": "application/json" },
+      });
+      toast({ title: s.isActive ? "Schedule deactivated" : "Schedule activated" });
+      refetchAll();
+    } catch (e: any) {
+      toast({ title: "Update failed", description: e.message, variant: "destructive" });
+    } finally { setTogglingId(null); }
+  };
+
+  const deleteSchedule = async (id: number) => {
+    setDeletingId(id);
+    try {
+      await authedFetch(`/api/finance/fee-schedules/${id}`, { method: "DELETE" });
+      toast({ title: "Schedule deleted" });
+      refetchAll();
+    } catch (e: any) {
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
+    } finally { setDeletingId(null); }
+  };
+
+  // Group schedules by class for a cleaner view
+  const grouped = schedules.reduce<Record<string, FeeSchedule[]>>((acc, s) => {
+    const key = s.className;
+    if (!acc[key]) acc[key] = [];
+    acc[key]!.push(s);
+    return acc;
+  }, {});
+
+  const activeCount = schedules.filter(s => s.isActive).length;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <BookOpen className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Class Fee Schedules</h2>
+        </div>
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" /> Set Fee Schedule
+        </Button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-2 flex-wrap items-center">
+        <Select value={yearFilter} onValueChange={setYearFilter}>
+          <SelectTrigger className="w-32"><SelectValue placeholder="Academic Year" /></SelectTrigger>
+          <SelectContent>
+            {yearOptions.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={classFilter} onValueChange={setClassFilter}>
+          <SelectTrigger className="w-44"><SelectValue placeholder="All classes" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All classes</SelectItem>
+            {[...(classesData?.classes ?? [])].sort((a, b) => a.gradeLevel - b.gradeLevel).map(c => (
+              <SelectItem key={c.id} value={String(c.id)}>Grade {c.gradeLevel} — {c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-medium text-green-600">{activeCount} active</span>
+          <span>/ {schedules.length} schedules</span>
+        </div>
+      </div>
+
+      {/* Info banner */}
+      <div className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+        <BookOpen className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+        <span>
+          Active schedules <strong>automatically override the fee type default</strong> when bulk-generating invoices for a class.
+          The academic year is derived from the invoice due date (July–June cycle).
+          A manual amount override in Bulk Generate always takes priority.
+        </span>
+      </div>
+
+      {/* Grouped schedule cards */}
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-lg border border-border bg-card p-4 h-28 animate-pulse bg-muted" />
+          ))}
+        </div>
+      ) : schedules.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card py-16 text-center">
+          <BookOpen className="h-10 w-10 mx-auto mb-3 opacity-20" />
+          <p className="text-sm font-medium text-foreground">No fee schedules for {yearFilter}</p>
+          <p className="text-xs text-muted-foreground mt-1 mb-4">
+            Create class-specific fee amounts that override defaults during bulk invoice generation
+          </p>
+          <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Set First Schedule
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {Object.entries(grouped)
+            .sort(([, a], [, b]) => a[0]!.gradeLevel - b[0]!.gradeLevel)
+            .map(([className, rows]) => (
+              <div key={className} className="rounded-lg border border-border bg-card overflow-hidden">
+                {/* Class header */}
+                <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-2.5">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">
+                    {rows[0]!.gradeLevel}
+                  </span>
+                  <span className="text-sm font-semibold">{className}</span>
+                  <span className="text-xs text-muted-foreground ml-1">Grade {rows[0]!.gradeLevel}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">{rows.length} fee type{rows.length !== 1 ? "s" : ""}</span>
+                </div>
+
+                {/* Fee rows */}
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border/50">
+                      {["Fee Type", "Class Amount", "Default Amount", "Difference", "Notes", "Status", "Actions"].map(h => (
+                        <th key={h} className="px-4 py-2 text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {rows.map(s => {
+                      const diff = s.defaultAmount !== null ? s.amount - s.defaultAmount : null;
+                      const diffPct = diff !== null && s.defaultAmount! > 0 ? (diff / s.defaultAmount!) * 100 : null;
+                      return (
+                        <tr key={s.id} className={cn("hover:bg-muted/20 transition-colors", !s.isActive && "opacity-50")}>
+                          <td className="px-4 py-3 font-medium">{s.feeTypeName}</td>
+                          <td className="px-4 py-3">
+                            <span className="font-bold tabular-nums text-indigo-700">৳{s.amount.toLocaleString()}</span>
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground tabular-nums">
+                            {s.defaultAmount !== null ? `৳${s.defaultAmount.toLocaleString()}` : "—"}
+                          </td>
+                          <td className="px-4 py-3">
+                            {diff !== null ? (
+                              <span className={cn("flex items-center gap-1 text-xs font-semibold tabular-nums",
+                                diff > 0 ? "text-red-600" : diff < 0 ? "text-green-600" : "text-muted-foreground")}>
+                                {diff > 0 ? <ArrowUpRight className="h-3 w-3" /> : diff < 0 ? <ArrowDownRight className="h-3 w-3" /> : null}
+                                {diff === 0 ? "Same" : `${diff > 0 ? "+" : ""}৳${diff.toLocaleString()}`}
+                                {diffPct !== null && diff !== 0 && (
+                                  <span className="font-normal text-muted-foreground">({diffPct > 0 ? "+" : ""}{diffPct.toFixed(1)}%)</span>
+                                )}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground max-w-[160px]">
+                            <span className="line-clamp-1">{s.notes ?? "—"}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <button onClick={() => toggleActive(s)} disabled={togglingId === s.id}
+                              className="flex items-center gap-1 text-xs disabled:opacity-50 transition-colors">
+                              {togglingId === s.id
+                                ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                : s.isActive
+                                  ? <ToggleRight className="h-5 w-5 text-green-500" />
+                                  : <ToggleLeft className="h-5 w-5 text-muted-foreground" />}
+                              <span className={s.isActive ? "text-green-600" : "text-muted-foreground"}>
+                                {s.isActive ? "Active" : "Inactive"}
+                              </span>
+                            </button>
+                          </td>
+                          <td className="px-4 py-3">
+                            <button onClick={() => deleteSchedule(s.id)} disabled={deletingId === s.id}
+                              className="p-1 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-50">
+                              {deletingId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+        </div>
+      )}
+
+      <AddScheduleDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={refetchAll} />
     </div>
   );
 }
@@ -2503,6 +2866,9 @@ export default function FinancePage() {
           <TabsTrigger value="budgets" className="flex items-center gap-1.5">
             <Target className="h-3.5 w-3.5" /> Budgets
           </TabsTrigger>
+          <TabsTrigger value="fee-schedules" className="flex items-center gap-1.5">
+            <BookOpen className="h-3.5 w-3.5" /> Fee Schedules
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Invoices tab ── */}
@@ -2664,6 +3030,11 @@ export default function FinancePage() {
         {/* ── Budgets tab ── */}
         <TabsContent value="budgets" className="mt-4">
           <BudgetTab />
+        </TabsContent>
+
+        {/* ── Fee Schedules tab ── */}
+        <TabsContent value="fee-schedules" className="mt-4">
+          <FeeSchedulesTab />
         </TabsContent>
       </Tabs>
 
